@@ -132,11 +132,17 @@ UNICODE = [  # toolfence unicode hygiene — raw-text only rules
     ("uni-bidi", "high",
      "[\u202A-\u202E\u2066-\u2069]",
      "bidi control characters (Trojan Source reordering)"),
+    ("uni-tags", "high",
+     "[\U000e0000-\U000e007f]",
+     "Unicode tag block (ASCII-smuggling: invisible payloads LLMs decode)"),
+    ("uni-varsel", "medium",
+     "[\ufe00-\ufe0f\U000e0100-\U000e01ef]",
+     "variation selectors (Sneaky Bits covert channel)"),
 ]
 
 # Union used for stripping in --sanitize: toolfence classes widened to grip's
 # broader format-control range (incl. LRM/RLM and invisible operators).
-_STRIP_RE = re.compile("[\u200b-\u200f\u2060-\u206f\ufeff\u202a-\u202e\u2066-\u2069]")
+_STRIP_RE = re.compile("[\u200b-\u200f\u2060-\u206f\ufeff\u202a-\u202e\u2066-\u2069\U000e0000-\U000e007f\ufe00-\ufe0f\U000e0100-\U000e01ef]")
 
 # grip _CONFUSABLES: NFKC does NOT fold Cyrillic lookalikes — explicit map.
 _CONFUSABLES = str.maketrans({

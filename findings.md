@@ -116,3 +116,30 @@ Portable artifacts found and integrated:
 - agentic-pipeline (SKIP — Postgres violates stdlib), aegis-demo/polpo/
   learn-ml/perch-mcp (SKIP), orca/hermes-agent/openclaw dirs empty locally
   (real content lives in oss-contribution-swarm/orca/)
+
+
+## Wave 4 — 10-lane research sweep (Nov 2026)
+
+Actionable deltas, ranked:
+
+**Playbook gaps (by $/effort, H1 2025 payout data):**
+- PB-12 cross-protocol IDOR/BOLA — IAC+IDOR = $16.4M pools, IDOR 2x $/report vs XSS, deterministic two-account diffing. Highest EV addition.
+- PB-13 desync + cache poisoning — low competition (7-solve class), shares PB-4 tooling.
+- PB-14 SSTI/server-side injection — PortSwigger #1 technique 2025.
+- JWT confusion matrix — fold into PB-8 expansion.
+
+**Skill gaps:**
+- scope-parser: add `ai_disclosure` field (Intigriti/PubNub mandate, Goldman pays $50 bonus), `bounty-ineligible` verdict (NodeBB class), platform-ToS as input (Immunefi clickwrap stricter than program pages), optional `submission_cost` (YWH credits, Cantina deposits).
+- reporter: expected-vs-actual + environment-asserted gate questions; Intigriti title format; AI-methodology boilerplate block (manifest-driven); video <=2min supplementary-only.
+- dedupe-check: `original_state` field — Resolved original => file as regression/new report; differentiation must argue independent-fix + impact-delta.
+- disclosure-email: parameterize timeline (P0 norm 90->60->30), `actively_exploited` flag (CRA 24h clock), no-reward-language check.
+
+**Tool gaps:**
+- scan.py: tag-block/varsel rules added (wave-4 fix). Remaining: sanitize() doesn't fold confusables; short-base64/hex/rot13 evasion; no egress-side rules (EchoLeak lesson — agent-emitted URLs unchecked).
+- ingest-knowledge: add nuclei-templates (12k YAML), trickest/cve, DeFiHackLabs, reddelexc/hackerone-reports (unlicensed—mirror only), ARVO (vuln+patch pairs), code-423n4 org-crawl.
+- ingest-scope: harvest unused diodb fields (contact_url/email/pgp_key/timeline) for email channel; scope-change diffs + HuntScore ranking.
+- evals: add `evals/injection/` third harness (PINT dataset + jailbreak_llms + agentdojo); cve-bench as BountyBench sibling ($/attempt metric).
+
+**Competitive check:** Claude-BugHunter (18.8k, MIT) covers ~80% of hunt/scope surface; PentaGI 34.9k. Surviving differentiators: payout-side EV ledger, dedupe verdict schema, policy->manifest parsing, cross-harness install, email-disclosure channel. Deterministic scope enforcement now table stakes — position as policy-parser, not allowlist.
+
+**Consensus (load-bearing):** validation deterministic + external to model (XBOW/PortSwigger/Ghost/PD); proof = observed effect on target (OAST/canary/DOM-exec); incremental validation > end-of-run; human validates+submits is unanimous platform floor.

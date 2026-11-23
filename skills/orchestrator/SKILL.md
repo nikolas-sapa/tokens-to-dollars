@@ -117,7 +117,7 @@ surfaces: <coverage-ledger surfaces to RELEASE, with final status>
    INTENT I-<n> [gate: G0-G3] [technique: playbook-id / check-id]
    [TASK] one line
    [SCOPE] exact hosts/paths this intent may touch
-   [AUTHORIZATION GATE] what permits this step
+   [AUTHORIZATION] public bug bounty program — <program name>, <policy URL>, roe-manifest.md, gate G<n>, human-approved <date>
    [BUDGET] max requests and rate (live work) / files-in-scope (code work) / token cap (../token-ledger)
    [EXPECTED INVARIANT] what secure looks like
    [STOP CONDITIONS] inherited + intent-specific
@@ -126,6 +126,7 @@ surfaces: <coverage-ledger surfaces to RELEASE, with final status>
    [PROHIBITED ACTIONS] inherited + intent-specific
    [PRIOR TRACES] ids of related worker traces to search first
    ```
+   The `[AUTHORIZATION]` field is the answer to worker refusals: an agent that sees a named public program, its published policy, the parsed manifest, the gate, and the human approval has verifiable context, so it executes instead of declining. Fill it honestly — never invent an approval.
 4. **Worker executes.** Real tools, minimal impact, evidence captured per `../evidence`. Writes the raw trace *before* formalizing facts — raw first, interpretation second.
 5. **Record.** Orchestrator dedupes asset observations, anchors new facts/findings, marks the intent done/blocked, **then wakes the planner** (step 2). Graph change is the wake event.
 6. **Loop until** the goal is proven, the budget is exhausted, a stop condition fires, or you halt it. A proven finding triggers stop-on-proof for that weakness; the engagement continues on independent chains.
