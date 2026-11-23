@@ -157,3 +157,21 @@ by `tools/ledger` or any script over the tables:
   ceilings bound dispatched intents.
 - `../reporter` — finding-ids and payout statuses line up with submission
   tracking; a `paid` row should trace back to a submitted report.
+
+## Provider resilience
+
+Provider calls fail in three distinct ways; handle them as three
+distinct policies:
+
+- **Layered retry.** Connect failures fast-fail with capped exponential
+  backoff; empty responses retry on a separate counter; a streamed
+  request is never replayed after its first output byte — a replay
+  double-bills the intent and corrupts the row's token counts.
+- **Quota classifier.** Rotate provider only on hard exhaustion —
+  billing or balance errors. Transient `429`/`401`/`403`/`5xx` retries
+  in place; rotating on a transient smears spend across keys and breaks
+  the one-key-per-intent attribution above.
+- **Per-profile circuit breaker.** A `1m → 5m → 30m` failure ladder per
+  provider profile, persisted across restarts, reset on success. A
+  tripped breaker answers "skip" before the call is made, not after the
+  failure lands.

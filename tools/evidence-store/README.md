@@ -45,6 +45,13 @@ key set required:
 - `verify` re-binds: sidecar digest vs `evidence.json` bytes, strict
   re-parse, finding_id vs dir name, and a live re-hash of every file in
   `files`. Emits a per-check JSON report.
+- Writes are not atomic — `evidence.json` and the sidecar land via
+  direct writes, so a crash mid-write can leave a torn pair (which
+  `verify` correctly fails). If atomicity matters at your capture
+  volume, stage to a temp file in the same dir and `rename(2)` over the
+  target, and GC stale temp files hourly with a grace window — only
+  remove temps older than one window; a fresh temp may still be
+  mid-rename.
 
 Exit codes: `0` ok, `1` validation/verification failure, `2` usage/IO.
 

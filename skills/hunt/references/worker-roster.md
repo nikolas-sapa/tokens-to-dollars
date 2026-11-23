@@ -33,3 +33,7 @@ Workers are dispatched by the orchestrator as intent packets (`../../orchestrato
 - **Evidence-backed output or nothing.** Facts and findings anchor to AS-nodes; every claimed boundary break carries the required evidence per `../../evidence`. Unverified observations stay hints.
 - **No generic work.** Every intent maps to the single most specialized roster role available; if no role fits, the orchestrator executes it inline rather than delegating to a generalist.
 - **Specialists are roles, not headcount.** One conversation can hold several roles sequentially; a fan-out runs them as parallel intents. Never claim parallel execution occurred if it did not.
+
+## Worker tool surface
+
+Workers receive a minimal tool surface: fact/finding/asset write tools, trace search, and node detail — nothing that reads the frontier. `list_facts`, the task overview, and planner state are the planner's job; a worker that reads the frontier starts planning, and claims stop meaning anything. The intent text is anchored in the worker's system-level instruction so context compaction cannot evict it mid-run.

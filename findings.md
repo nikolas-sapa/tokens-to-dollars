@@ -178,3 +178,27 @@ Actionable deltas, ranked:
 **Monetization lesson:** C4 bot-race paid bots 10% of pool to DEDUPE — dedupe-check is product-shaped. XBOW #1 leaderboard masked <$40K actual payouts — receipts must be dollars, not reputation. Human-validates+submits is the universal surviving pattern (H1 Hackbot, sportsbooks, Immunefi).
 
 **Skip:** contract-net bidding (homogeneous fleet, no info), full decentralization (authorization needs a choke point), Byzantine gossip (<10 workers = cosplay), framework rewrite (LangGraph/CrewAI features would cost the markdown auditability that IS our moat).
+
+
+## Wave 6b — ARTEX source mining (local clone ~/ARTEX, horizonl fork of Autumn-27/artex, norma v0.4.3)
+
+80 mechanisms mapped. Fork delta = Unreleased changelog: notify pipeline + 11-bug security audit + v3 delete-path rule.
+
+Ported (wave 7b):
+- assess.sh attestation->auto-lock flow concept -> wrap [platform-deny] prefix on policy denials
+- minimal-scope rules (hostname->subdomain, deny-on-doubt, self-contained constraints) -> scope-parser
+- worker minimal tool surface + system-prompt mandate anchoring -> worker-roster
+- deny-list porosity admission (v1 missed GET-to-delete; ambiguous=>ask) -> coverage-ledger
+- bounded index renderer (per-section caps + paired totals) -> consolidate.py
+- retry tiers/quota classifier/breaker ladder constants -> token-ledger reference
+- evidence staging->rename+GC grace -> evidence-store note (if non-atomic)
+
+Noted, deferred:
+- notify outbox same-tx + lease delivery + the fork's 11-bug notify audit (masked-secret resubmission, per-outlet escaping, dial-stage SSRF, url.Error token strip, presence-defaults, batch-poisoning) — checklist for when we build notifications
+- intercept re-read-after-register race fix + decision_source rule|model|unknown
+- intent admission rollback (DiscardOpenIntent), delete barriers, persisted queue holds — coverage SQLite covers semantics
+- cross-task overview rune-ledger + one-hop inheritance caps (48000/8000 runes) — for memory/index tier at scale
+- api-recon skill: mock-not-login pattern, >100KB bundle prohibition, grep|head + wc-l verify — candidate reference for browser worker
+- platform-deny message framing: 【platform-control·not-target-defense】concept ported as [platform-deny]
+
+Cautionary patterns confirmed from source: regex deny-lists on raw tool_input are porous by construction; exfil-pipe heuristics ship disabled due to real FPs; an open MITM proxy on 0.0.0.0 = open relay (theirs binds loopback only).

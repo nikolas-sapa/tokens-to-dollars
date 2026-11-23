@@ -122,3 +122,11 @@ learning loop for the next engagement. Keep them factual.
 - No duplication: every ledger row anchors to an `AS-<id>`; node detail,
   hypotheses, and finding bodies never live in the ledger. One
   `finding-id` pointer in notes is the maximum.
+
+## Deny rules are porous
+
+Pattern-matched deny rules are necessarily incomplete — ARTEX's own
+changelog documents a GET-to-delete bypass its v1 rules missed. Any
+ambiguous action a deny check can't cleanly classify resolves to
+human-ask, never silent allow. Deny rules are a first filter, never the
+authorization boundary: the manifest allowlist is (`../scope-parser`).

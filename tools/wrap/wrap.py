@@ -69,6 +69,10 @@ def warn(msg):
 
 
 def die(code, msg):
+    if code == 3:
+        # our policy refusal, not a target-side WAF/rate-limit — the caller
+        # must read this as "stop", never as a signal to evade
+        msg = "[platform-deny] %s" % msg
     warn(msg)
     return code
 

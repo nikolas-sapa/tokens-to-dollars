@@ -119,6 +119,23 @@ embargo_days: null
 - **Prohibited-method ceilings are hard.** A worker that cannot operate under
   the ceiling for a target is not dispatched there.
 
+## Minimal-scope extraction
+
+- **A hostname in the goal text means subdomain scope.** `api.acme.com`
+  stays `api.acme.com` — never collapse it to `acme.com`. Only bare
+  root-domain or entire-site phrasing ("acme.com", "all acme properties")
+  produces a wildcard or root-domain entry.
+- **Constraints are self-contained.** Rewrite deictic references — "the
+  target", "this program", "it" — to the concrete asset or program at
+  extraction time. A constraint that only parses inside the source
+  paragraph is a bug, not shorthand.
+- **Deny on doubt.** An asset whose scope kind is ambiguous resolves to
+  the narrower reading: `domain` over `wildcard-domain`, context-only
+  (`eligible_for_bounty: false`) over eligible, `unknowns` over a guess.
+- **Scope widens only via explicit top-level writes** to
+  `authorized_assets` — never as a side-effect of a derived entry, an
+  inference, or denylist arithmetic.
+
 ## Worked example
 
 Policy text (fake program "Acme Corp"):
