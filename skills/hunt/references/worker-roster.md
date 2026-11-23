@@ -1,6 +1,6 @@
 # Reference — Worker Roster
 
-Companion to the `hunt` skill (`../SKILL.md`). The fourteen specialist worker roles: what each covers, the catalogue categories and playbooks it owns, its gate ceiling, and how it claims surfaces via `../../coverage-ledger`.
+Companion to the `hunt` skill (`../SKILL.md`). The fifteen specialist worker roles: what each covers, the catalogue categories and playbooks it owns, its gate ceiling, and how it claims surfaces via `../../coverage-ledger`.
 
 Workers are dispatched by the orchestrator as intent packets (`../../orchestrator`). Every worker executes exactly one intent at a time, works only the surface it claimed, and returns evidence-backed findings, inconclusive hypotheses, and coverage gaps.
 
@@ -22,6 +22,7 @@ Workers are dispatched by the orchestrator as intent packets (`../../orchestrato
 | 12 | Attack-Path Analyst | Correlates proven findings into trust-boundary and impact chains; aggregates individually-low findings into demonstrated chain reports | Attack-path analysis in `verification.md`; chain-aggregation rule in `playbooks.md` | G0 analysis; re-tests links at that link's gate |
 | 13 | Independent Verifier | Reproduces candidate findings and rejects false positives — never the worker that found the thing | Ten-gate verification, FP rejection rules, confidence states in `verification.md`; `../../dedupe-check` | Reproduces at the finding's own gate |
 | 14 | Remediation & Incident Analyst | Root-cause fixes, containment recommendations, investigation requirements | `../../reporter` draft fields; incident-verdict classifications in `exposure-investigation.md` | G0 |
+| 15 | Browser Worker | Logged-in browser reach: sessioned flows, DOM-dependent checks, business-logic classes HTTP replay cannot reach | PB-3, PB-12; DOM paths in WEB-01, WEB-10, WEB-11, WEB-19; real-browser runs (Playwright-class tools) dispatched through `tools/wrap` under the manifest | G2 |
 
 ## Worker operating rules
 

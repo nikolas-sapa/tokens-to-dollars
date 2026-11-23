@@ -113,3 +113,19 @@ reaching the payment frame"), with H1-2345678 cited in `matches`.
   IDs/URLs that caused it in `matches`.
 - **Dedupe again on retest.** If a finding is revisited days or weeks later,
   re-run this skill. Someone may have disclosed the same bug in the meantime.
+
+## Council verify
+
+At the verify gate only — a candidate about to be called `verified` —
+fan the signature, the hit list, and the draft verdict out to 3
+independent runs/models, then cross-rank the returned verdicts
+anonymized (each run ranks the others' reasoning without knowing
+provenance). Majority verdict stands; a split council keeps the finding
+at `plausible` and names the dissent in `matches`.
+
+- Bounded cost: exactly 3 runs, once per candidate, capped tokens each.
+- Never per intent, never per fact — council fires once per candidate
+  reaching the verify gate, not during exploration.
+- Council output appends to the `dedupe` block as `council: {runs: 3,
+  verdicts: [...], consensus: <verdict>}` — the disagreement is recorded,
+  not averaged away.

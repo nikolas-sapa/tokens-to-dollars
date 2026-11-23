@@ -104,6 +104,25 @@ Rates above are examples; check your provider's current pricing.
   evidence rides the escalated packet — escalation continues the attempt,
   it does not restart it.
 
+## Per-intent cost attribution
+
+Route each intent's calls through a distinct proxy key or session tag —
+a LiteLLM virtual key, a Helicone `session-id`, a per-intent OpenRouter
+key — so the provider's own usage record arrives already split by intent.
+
+- **Attribution upgrades the marker.** When the proxy reports spend per
+  key or session, `e`/`u` rows flip to provider-reported `p` with no
+  token arithmetic to audit — the highest-trust figure becomes the
+  default, not the exception.
+- **Budgets fail closed.** Set the key's hard `max_budget` equal to the
+  intent's `cost-ceiling`: the ceiling is enforced at request time by
+  the proxy refusing the call, not by the planner polling cumulative
+  spend between calls. Polling is advisory; the key is the brake.
+- **One key per intent, never shared.** A shared key smears spend across
+  rows and makes per-intent EV uncomputable. Record the key alias —
+  never the secret — in the intent's notes so a `p` row traces back to
+  the provider report.
+
 ## Derived metrics (computed on demand, never stored)
 
 The ledger is the only stored truth; dashboards are throwaway views computed

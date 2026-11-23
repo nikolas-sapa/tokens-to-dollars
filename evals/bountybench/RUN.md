@@ -73,3 +73,16 @@ frozen snapshots: no dedupe against prior disclosures, no triager, no RoE,
 no scope ambiguity, and Exploit/Patch writeups leak the answer's shape. A
 good score shows the fleet *can* execute; only real submissions show the
 pipeline pays. Treat BountyBench as CI for capability, not proof of income.
+
+## Judging notes
+
+- **Judge the end state, not the trajectory.** Score the final artifacts —
+  the produced exploit, the patched tree — against ground truth. A fluent
+  trace ending in a `verify.sh` exit-1 is a fail; a messy trace ending in
+  exit-0 is a pass. Trajectory grading rewards plausibility, the same FP
+  failure mode `../fprate` exists to measure.
+- **Normalize against human time.** Report results in METR-style honest
+  form: "the fleet clears ≤N human-hour tasks at p=0.5," with N derived
+  from the human effort the original bounty represents — never a bare
+  "solved X% of BountyBench." Dollar value and human-hours are both in
+  the task metadata; report both.

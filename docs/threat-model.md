@@ -52,3 +52,20 @@ and intents can carry explicit cost ceilings the planner enforces.
   path, and we do.
 - Platform-side enforcement (rate limiting, program bans) belongs to the
   platforms; our job is to stay well inside what they permit.
+
+## Prompt-vs-code enforcement
+
+Honest accounting: the skills in this repo are prose. Mechanical
+enforcement exists only at tool dispatch — `tools/wrap/wrap.py`'s
+manifest gate refuses out-of-scope targets before the binary runs, the
+audit chain (`tools/audit-log`) keeps the record tamper-evident, and the
+evidence store (`tools/evidence-store`) enforces append-once writes.
+Every other gate — G0–G3 escalation, fenced semantics, settlement,
+human-submits — is convention: a misbehaving or injected worker issuing
+tool calls directly could bypass it, and nothing at runtime would stop
+the call. The mitigation ladder is (1) harness-level hooks —
+PreToolUse-style checks that run the manifest gate on every dispatch,
+wrapped or not — the next hardening step, and (2) fleet-level monitoring
+for gate-skips in the audit log. ARTEX is the standing lesson: its
+safety gates lived at prompt level, and prompt-level gates are exactly
+what its abusers walked around.

@@ -40,7 +40,7 @@ harness: `docs/install-matrix.md`.
    on a target: record the profile before any intent dispatches.
 4. **Hunt loop.** The orchestrator dispatches intent packets; workers run
    `skills/hunt` — the 110-check catalogue for systematic coverage, the
-   PB-1–PB-11 playbooks for technique — inside the gate ceilings of
+   PB-1–PB-14 playbooks for technique — inside the gate ceilings of
    `skills/safety-gates`. Facts and findings anchor to the asset graph;
    `skills/coverage-ledger` stops parallel workers colliding;
    `skills/injection-defense` governs every fetched byte;
@@ -65,7 +65,7 @@ harness: `docs/install-matrix.md`.
 | Skill | One-line job |
 |---|---|
 | `orchestrator` | Planner/worker closed loop on a persistent dual graph (assets + exploration): intent packets, trace sharing, cross-engagement learning |
-| `hunt` | Two layers: 110-check catalogue (`references/check-catalogue.md`) for breadth + 11 field-sourced playbooks (PB-1–PB-11) for technique; plus worker roster, ten-gate verification, exposure investigation (`references/`) |
+| `hunt` | Two layers: 110-check catalogue (`references/check-catalogue.md`) for breadth + 14 field-sourced playbooks (PB-1–PB-14) for technique; plus worker roster, ten-gate verification, exposure investigation (`references/`) |
 | `scope-parser` | Program policy → machine-enforced `roe-manifest.md`; anything not in scope is denied |
 | `safety-gates` | G0–G3 authorization ladder, rate limits, stop conditions, hard prohibitions |
 | `coverage-ledger` | Per-program surface claims so parallel workers never duplicate |

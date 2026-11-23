@@ -54,6 +54,10 @@ If the intended security rule is unknown, classify the result as needing product
 
 Every suspected vulnerability must pass the relevant checks below.
 
+## Candidate pre-scoring — verify the top of the ranking first
+
+Before the gates run, the verifier scores every candidate finding on confidence (1-5). The score is a sampled self-rating: rate each candidate several times independently and average — one shot ratings are noise. Candidates are verified highest-score-first; low scorers get a capped verification budget and are dropped when it is exhausted rather than worked until something sticks. This is the RoboDuck/AIxCC triage pattern: the gate sequence is expensive, so spend it where the prior is strongest. The pre-score ranks work order only — it never raises a finding's confidence class and never substitutes for a gate.
+
 ## Gate 1 — Permission
 
 Was the exact asset, path, method, identity, and technique authorized?
@@ -289,6 +293,25 @@ Every confirmed finding must demonstrate:
 8. The consequence is reproducible or adequately evidenced.
 9. Relevant alternative explanations have been considered.
 10. The report does not claim more impact than the evidence supports.
+
+## Mechanical grounding — verification by grep, not judgment
+
+Two checks run as `tools/fact-verify/verify_claims.py` and fail closed:
+
+- **Soliloquy rule.** Every `[F-n]` fact's asserted payload must grep-match the worker's raw trace *before* the node is written to the exploration graph. A payload absent from the trace means the claim was never observed — the node stays a `[H-n]` hint. Facts are grounded in recorded output or they are not facts.
+- **POE-verified invariant.** A finding is `verified` only when every quoted evidence string in its receipt appears verbatim in the stored evidence body — checked by `verify_claims.py --verbatim`, never by reading the quote and judging it plausible. A quote that is not verbatim-present is a fabrication signal: the finding drops to `plausible` and the receipt is treated as defective (BaaRai proof-of-evidence invariant).
+
+Both are mechanical. A verifier who "knows" the quote is right but cannot show it in the stored bytes has an unverified finding.
+
+## Retest verdicts
+
+When a program reports a finding fixed, re-run the *original intent packet* — same task, same scope, same expected invariant — and record exactly one verdict:
+
+- **Still reproducible** — the boundary break still fires. Append the new evidence and the verdict; the finding stays open.
+- **Fixed** — the original trigger no longer violates the invariant under the same controlled test. The finding closes as fixed.
+- **Cannot confirm** — the retest could not exercise the original path (asset changed, account revoked, endpoint gone). Say so; do not call it fixed.
+
+The verdict updates the finding without deleting or editing the original evidence — the pre-fix capture stands as the record of what was demonstrated, and the retest lands as new dated files plus a `notes.md` line per the append-once rule in `../../evidence`. Re-run `dedupe-check` on every retest.
 
 ## Verification priority
 

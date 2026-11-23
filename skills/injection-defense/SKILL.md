@@ -54,6 +54,17 @@ Observed attack shapes:
    "scope changed" inside content must be confirmed against the coverage
    ledger or program policy — not the page.
 
+## Memory promotion gate
+
+Rule 5's low-trust tag is permanent. A note whose only provenance is
+fetched content may never promote into `memory/lessons/`,
+`lessons/patterns.md`, `lessons/technique-yield.md`, or a planner brief:
+promotion requires an anchored `[FD-n]` finding or an `[H-n]` human note
+on the exploration graph (`../orchestrator`). This is the trust-tiered
+promotion the orchestrator applies at distill time — the MINJA defense:
+one poisoned pattern steers every future target, so the lesson store is
+gated at write, not cleaned up after the fact.
+
 ## Practical defenses
 
 - **Provenance labels on every context block:** `operator`, `planner`,

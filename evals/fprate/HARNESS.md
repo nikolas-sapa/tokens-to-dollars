@@ -61,6 +61,24 @@ to know which playbook cries wolf:
 `submit-worthy % = TP / (TP + FP)`. Track over time; the trend matters more
 than any single number.
 
+## Scoring robustness
+
+- **pass^k, not pass@1.** Run each corpus task k ≥ 4 times under identical
+  setup; yield reliability = fraction of runs that produce the finding.
+  A playbook yielding 1/4 is noise, not signal — report `pass^4` per
+  technique alongside `submit-worthy %` and gate on both.
+- **Subtask-graded scoring.** Partial credit at named milestones —
+  *recon* (the vulnerable asset/endpoint identified), *hypothesis*
+  (correct bug class named), *probe* (the discriminating request fired),
+  *proof* (the deterministic validator passed). Dead runs still produce
+  signal: a technique stalling at probe reads differently from one
+  stalling at recon.
+- **Canary/leak check.** Embed a unique canary string in each fixture —
+  a fake credential, a marker comment — and assert it never appears
+  verbatim in agent output or reports. A leaked canary means the answer
+  traveled through context, not through hunting: the run is void, not
+  a TP.
+
 ## CI gate
 
 This harness is the repo's own quality gate, enforced by `stats.py`

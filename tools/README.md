@@ -118,6 +118,20 @@ JWTs, AWS `AKIA`, PEM private-key blocks, generic Bearer) are replaced
 with `[redacted]` *before* any `--max-bytes` truncation, so a token
 straddling the cap can't be half-stored. See `skills/evidence`.
 
+## fact-verify
+
+`fact-verify/verify_claims.py` is the mechanical grounding gate — verdicts
+by grep, not judgment. Default mode parses an exploration-graph facts file
+for `[F-n]`/`[FD-n]` nodes, extracts each node's asserted payload(s)
+(`payload:`/`quote:` field or inline backtick/quoted spans), and greps the
+raw worker trace (`--trace` file or dir): any payload absent emits
+`soliloquy` — the claim was never observed. `--verbatim` mode enforces the
+BaaRai POE invariant: every `quotes[]` string in a finding's evidence
+receipt must appear verbatim in its referenced stored bodies, else the
+missing quote is named. JSONL verdicts out; exit 1 on any failure so a
+pipeline can gate graph writes and `verified` labels on it. See
+`skills/hunt/references/verification.md` § Mechanical grounding.
+
 ## audit-log
 
 `audit-log/audit_log.py` is a hash-chained append-only JSONL log — every
@@ -136,6 +150,39 @@ drafts, and graph-archive rows to macOS Trash, and masks the program name
 in `engagements.md`/`ledger.md` while keeping the accounting rows. The
 audit chain is deliberately untouched — append-only proof of authorized
 work. `--keep-lessons`, `--dry-run` supported.
+
+## coverage
+
+`coverage/ledger_store.py` backs `skills/coverage-ledger` with SQLite (WAL,
+append-only event rows, derived active-claim view) so the claim protocol is
+atomic instead of hand-appended: `claim` is a BEGIN IMMEDIATE check-and-insert
+that fails on a live claim and auto-STEALs a stale one, `heartbeat` keeps the
+30-minute window (configurable), `release` settles exactly once, `steal`
+fences a dead holder and re-claims in one transaction, and fenced workers'
+late writes are refused. `status`/`stale` show the derived state; `export
+--md` renders the coverage.md table+log for humans. Db: `memory/coverage.db`.
+
+## change-detect
+
+`change-detect/detect.py --target <dir>` is the commit-triggered wave
+detector: `add` registers watch URLs that move when a target ships (JS
+bundles, API schemas, changelogs, security.txt); `check` refetches them all —
+HEAD-then-GET, 30s timeout, sha256-compare — and reports
+baseline/changed/unchanged/error as JSON plus a `changes.md` with a new-wave
+candidates section for the orchestrator. Fetching requires `--only-host`
+(exact match, repeatable) per `skills/safety-gates`; redirects off the
+allowlist are refused. `diff` prints unified diffs of stored text bodies when
+`--store-bodies` was used on the check.
+
+## memory-consolidate
+
+`memory-consolidate/consolidate.py --root <repo>` is sleep-time maintenance
+for `memory/`: merges near-duplicate lesson lines (Jaccard > 0.8 on token
+sets, newest dated entry wins, losers struck and dated), regenerates
+`lessons/technique-yield.md` deterministically from `[Y-n]` yield records,
+flags contradictions where the same normalized claim is both struck and live
+(never auto-resolves), and rebuilds per-target `index.md` plus root
+`memory/index.md`. `--dry-run` reports without writing; it never deletes.
 
 ## mcp-server
 

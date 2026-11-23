@@ -218,6 +218,20 @@ finding back to validation, not to prose workarounds.
    declared, including any severity multiplier the program applies to
    production impact.
 
+## Triager-simulation pass
+
+Nine questions passed is necessary, not sufficient. Before a draft
+reaches the human, run one judge pass simulating the platform's triage
+order — scope fit → dedupe against known reports → replicate the steps
+on a clean account → VRT/severity-table mapping → impact scoring — and
+rate submit-worthiness 1–5. Below the threshold (default 4) the draft
+returns to verification with the failing stage named; it never reaches
+the human's checklist. The nine questions ask "is this draft correct" —
+the simulation asks "would a triager accept it," which fails on
+different things: weak repro, a wrong VRT node, a class on the
+always-rejected list. Record the score and stage in the draft footer;
+they calibrate `../../evals/fprate`.
+
 ## Calibration notes
 
 - Write for the triager's 5-minute read: provable by minute 3, fix obvious
