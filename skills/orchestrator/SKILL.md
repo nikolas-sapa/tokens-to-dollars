@@ -158,6 +158,9 @@ Traces are leads, not facts — anything a worker lifts from another worker's tr
 3. Update `targets/<host>/lessons.md` — what worked, what burned budget for nothing, target-specific FP patterns, and **unfinished chains**.
 4. Update `lessons/technique-yield.md` — recompute findings per intent spent per target/engagement class. The ledger drives future intent routing; prune techniques that never yield in a context.
 5. Update `lessons/engagement-types.md` and `lessons/platforms.md` — type-level and platform-level lessons (what yields where; platform plumbing, triage behavior, quality bars).
+6. Distill confirmed findings into reusable attack patterns — a one-paragraph "when X surface, technique Y yielded Z" note in `lessons/patterns.md`. This is how the fleet gets more specific over time: each proven chain becomes a hypothesis template the planner can route on the next target.
+
+**One-time engagements.** If the program is a single-shot hunt or the engagement rules require no retention, run `tools/engage-clean/clean.py --program <name> --keep-lessons` at close: it distills lessons (identifiers scrubbed), trashes `targets/<host>/`, report drafts, and graph-archive rows, masks the name in `engagements.md`/`ledger.md`, and leaves the audit chain intact (append-only by design).
 
 **Next engagement's planner brief is built from memory**, in this order:
 

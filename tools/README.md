@@ -127,6 +127,16 @@ Merkle checkpoints every 25 entries and payload sidecars for large blobs.
 checkpoint roots. "If it isn't recorded, it didn't happen" as a mechanism.
 See `tools/audit-log/README.md`.
 
+## engage-clean
+
+`engage-clean/clean.py` is the one-time-engagement purge: `--program <name>`
+distills the target's lessons into `memory/lessons/distilled.md` (program
+name and hostnames scrubbed), moves `memory/targets/<program>/`, report
+drafts, and graph-archive rows to macOS Trash, and masks the program name
+in `engagements.md`/`ledger.md` while keeping the accounting rows. The
+audit chain is deliberately untouched — append-only proof of authorized
+work. `--keep-lessons`, `--dry-run` supported.
+
 ## mcp-server
 
 `mcp-server.py` is a hand-rolled stdio JSON-RPC MCP server (stdlib only, ~150
