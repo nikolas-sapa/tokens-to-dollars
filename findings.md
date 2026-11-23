@@ -143,3 +143,38 @@ Actionable deltas, ranked:
 **Competitive check:** Claude-BugHunter (18.8k, MIT) covers ~80% of hunt/scope surface; PentaGI 34.9k. Surviving differentiators: payout-side EV ledger, dedupe verdict schema, policy->manifest parsing, cross-harness install, email-disclosure channel. Deterministic scope enforcement now table stakes — position as policy-parser, not allowlist.
 
 **Consensus (load-bearing):** validation deterministic + external to model (XBOW/PortSwigger/Ghost/PD); proof = observed effect on target (OAST/canary/DOM-exec); incremental validation > end-of-run; human validates+submits is unanimous platform floor.
+
+
+## Wave 6 — ARTEX lineage + systems research (Nov 2026, 6 lanes)
+
+**ARTEX autopsy (why it died, what we already avoid):**
+- All ARTEX safety was prompt-level: scope gate ran only at graph-write, judge fail-open, 4-suffix denylist, tools bypassed interception. CrowdStrike traced campaigns through its own graphs.
+- Our position: wrap.py manifest gate = enforcement in code; audit chain = tamper-evident; human-submits by design. The gap that remains: gates enforced by code only at tool-dispatch — prompt-level everywhere else (threat-model should acknowledge this).
+
+**Steals ranked (cross-lane, effort/payoff):**
+1. Soliloquy check (EnIGMA): grep every [F-n] fact payload against the worker's raw trace before graph write — enforces "raw trace first" mechanically. ~30 lines.
+2. POE-graded verified findings (BaaRai): finding=verified only if every evidence quote appears verbatim in stored body. Greppable invariant.
+3. Sampled-logprob FP pre-scoring (RoboDuck/AIxCC): rank candidates before ten-gate verification — spend verification budget on top scores.
+4. Stall counter → re-plan (Magentic-One): N intents closed with zero new anchored facts => forced replan/escalate. 5 lines in orchestrator §5.
+5. Retest stage (Novee/BaaRai retester): Stage 11 — on "fixed" reports, re-run original intent packet; verdicts Still reproducible/Fixed/Cannot confirm.
+6. mem0 write-gate + Graphiti validity windows (memory lane): ADD/UPDATE/DELETE/NOOP at append; strikethrough -> (valid from->to|open; superseded_by). Kills monotone memory growth.
+7. Trust-tiered promotion (MINJA defense): content-derived notes cannot enter lessons/patterns without anchored finding behind them — one poisoned pattern steers every future target.
+8. Council-verify (llm-council): 3-model anonymized ranking at dedupe/verify gate only — bounded cost, kills single-model blind spots.
+9. Per-intent cost via proxy keys (LiteLLM/Helicone): converts est-$ e/u rows to provider-reported p; makes budget fail-closed.
+10. Browser-worker role (QAX Gatling): 15th roster role — logged-in browser reach for business-logic classes HTTP replay can't hit (PB-3, PB-12).
+11. Commit-triggered waves (Aardvark): change-detection worker (JS bundle hash, schema diff) as highest-yield recon trigger; feeds "unfinished chains first".
+12. SQLite coverage-ledger: concurrent markdown appends can interleave; keep CLAIM/HEARTBEAT/RELEASE/STEAL semantics, swap backing store.
+13. Structured TrajectoryStep JSONL + ghost replay: receipts' replay_of field becomes real; post-hunt review + PoC re-verification.
+14. pass^k on fprate corpus: playbook that yields 1/8 runs is noise — reliability metric.
+15. Subtask-graded evals + leak-checks (Cybench): partial credit; canary-string leak detection.
+16. Egress rules (EchoLeak, from wave 4): agent-emitted URLs resolve against manifest scope — still open.
+17. Memory consolidation job (Letta sleep-time): merge dup lessons, recompute yield, flag contradictions between engagements.
+18. Index tier for planner briefs (claude-mem): index.md per target; fetch-on-demand detail — needed at 100+ targets.
+19. [PRIOR TRACES] mandated sibling-summary (HPTSA): planner fills 2-line outcome digest per prior intent on same surface.
+20. decided_by attribution on gates (ARTEX Pro): audit log records human|rule|judge per gate decision.
+
+**Skill/distilled promotion (mythosharness):** patterns.md entries graduate to skills/distilled/<pattern>.md after N confirmations — fleet literally writes its own new skills.
+
+**Monetization lesson:** C4 bot-race paid bots 10% of pool to DEDUPE — dedupe-check is product-shaped. XBOW #1 leaderboard masked <$40K actual payouts — receipts must be dollars, not reputation. Human-validates+submits is the universal surviving pattern (H1 Hackbot, sportsbooks, Immunefi).
+
+**Skip:** contract-net bidding (homogeneous fleet, no info), full decentralization (authorization needs a choke point), Byzantine gossip (<10 workers = cosplay), framework rewrite (LangGraph/CrewAI features would cost the markdown auditability that IS our moat).
