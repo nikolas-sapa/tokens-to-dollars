@@ -475,6 +475,9 @@ def main():
     ap.add_argument("--include-suspect", action="store_true",
                     help="keep scam-suspect listings (dropped by default)")
     ap.add_argument("--out-dir", default="./out", help="output directory")
+    ap.add_argument("--teaser", action="store_true",
+                    help="also write teaser.txt: ranked numbers with program "
+                         "identity masked (shareable without leaking targets)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s",
@@ -532,6 +535,30 @@ def main():
     index["total_bounties"] = len(out)
     index["ranking"] = "reward_usd * (1 - competition_score/100), ties by age asc"
     (out_dir / "index.json").write_text(json.dumps(index, indent=2) + "\n")
+
+    if args.teaser:
+        import hashlib
+        addr = sum(b["reward_usd"] or 0 for b in out)
+        esc = sum(1 for b in out if b["funding"] == "escrowed")
+        lines = [
+            "bounty-radar teaser — %d bounties ranked, identity masked" % len(out),
+            "addressable: $%s | escrowed: %d | generated: %s" % (
+                f"{addr:,.0f}", esc, index["generated_at"]),
+            "",
+            "%-4s %-12s %12s %11s %6s %9s" % (
+                "rank", "id", "reward_usd", "competition", "funding", "value"),
+            "-" * 60,
+        ]
+        for i, b in enumerate(out, 1):
+            alias = "bty-" + hashlib.sha1(
+                (b.get("url") or b["title"]).encode()).hexdigest()[:8]
+            lines.append("%-4d %-12s %12s %11s %6s %9.1f" % (
+                i, alias,
+                f"{b['reward_usd']:,.0f}" if b["reward_usd"] else "-",
+                "%.0f" % b["competition_score"], b["funding"],
+                b["value_score"]))
+        (out_dir / "teaser.txt").write_text("\n".join(lines) + "\n")
+        log.info("wrote teaser.txt (%d masked rows)", len(out))
     n_err = sum(1 for s in index["sources"] if s["status"] != "ok")
     log.info("wrote %d bounties to %s (%d source(s) failed)",
              len(out), out_dir, n_err)
