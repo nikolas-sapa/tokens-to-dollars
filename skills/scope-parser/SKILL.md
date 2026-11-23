@@ -1,0 +1,149 @@
+---
+name: scope-parser
+description: Parse a bug bounty program's policy page plus platform scope data into a machine-enforced rules-of-engagement manifest. Run at gate G0 before any worker touches a target, and re-run whenever the manifest is stale. The manifest is the only scope authority — memory of past scope never authorizes.
+---
+
+# scope-parser
+
+Converts prose program policy into `roe-manifest.md`: a per-program,
+machine-checkable rules-of-engagement file at
+`memory/targets/<program>/roe-manifest.md`. Every asset check, rate decision,
+and worker dispatch in later gates reads this file and nothing else.
+
+## Inputs
+
+1. Normalized program record from `tools/ingest-scope` (`data/programs.json`):
+   `platform`, `name`, `url`, `max_payout`, `safe_harbor`,
+   `excluded_methods[]`, `in_scope[]`, `out_of_scope[]`, `testing_policy_url`.
+2. The program's public policy page, fetched live at run time
+   (`testing_policy_url`, falling back to the platform program page). Store
+   the SHA-256 of the fetched body as `policy_hash`; it drives staleness.
+
+Never work from memory or a stale fetch. If the policy fetch fails, still emit
+a manifest seeded from `programs.json` with everything else in `unknowns`.
+That manifest denies almost everything, which is the correct failure mode.
+
+## Procedure
+
+1. Load the `programs.json` record; seed scope lists and `excluded_methods`.
+2. Fetch the policy page. Extract, in order of authority:
+   a. explicit in/out-of-scope asset tables (override feed data on conflict)
+   b. prohibited testing methods and their carve-outs
+   c. automation / AI / scanner clauses
+   d. rate limits, test-account rules, VPN/Tor or header requirements
+   e. safe-harbor text, disclosure and embargo terms
+3. Reconcile feed vs page: **the stricter reading wins** on every conflict.
+4. Write `roe-manifest.md` (schema below). Anything not found in a source goes
+   in `unknowns`: never invent a rule.
+5. Record `fetched_at` and `policy_hash`.
+
+## Staleness
+
+Re-run this skill when `now - fetched_at > 7 days` OR a refetched policy hash
+differs from `policy_hash`. A stale or missing manifest blocks the gate; do
+not test on it.
+
+## Manifest schema
+
+```markdown
+# RoE Manifest — <program name>
+
+## identity
+platform:     hackerone
+program:      <handle>
+policy_url:   https://...
+fetched_at:   2025-01-14T09:30:00Z
+policy_hash:  sha256:...
+
+## authorized_assets
+# eligible_for_bounty=false assets may be mapped for context but never attacked
+- asset: "*.example.com"        type: wildcard-domain  eligible_for_bounty: true
+- asset: "api.example.com"      type: domain           eligible_for_bounty: true
+- asset: "internal.example.com" type: domain           eligible_for_bounty: false
+
+## hard_denylist
+# wildcard carve-outs: "*.example.com" in scope does NOT include these
+- "excluded.example.com"
+- "*.staging.example.com"
+- pattern: "third-party:*"    # any asset not program-owned
+
+## prohibited_methods          # source clause -> blocked techniques -> gate ceiling
+- method: dos                  blocks: [flooding, load-testing, resource-exhaustion]  ceiling: G2-capped, manual only
+- method: social_engineering   blocks: [phishing, pretexting, vishing, smishing]      ceiling: G0
+- method: automated_scanning   blocks: [nuclei, dirb-fuzzing, mass-crawling]          ceiling: G1 for automation
+- method: physical             blocks: [onsite, hardware, badge-cloning]              ceiling: G0
+- method: third_party          blocks: [vendor attacks, supply-chain probes]          ceiling: G0
+
+## automation_policy
+ai_output: validation-required   # stated-allowed | validation-required | banned
+submitter: human                 # ALWAYS human — autonomous submission is out of scope
+
+## rate_limits
+rps_cap: null                    # null = unstated -> default-safe profile (<=1 rps, jittered)
+test_accounts: unstated          # required | provided | forbidden | unstated
+notes: ""
+
+## safe_harbor
+status: true
+disclosure: coordinated          # coordinated | nda-bound | none | unstated
+embargo_days: null
+
+## unknowns
+# not found in source: each item is treated as its most restrictive reading
+- "embargo window"
+- "retest policy for fixed findings"
+```
+
+## Enforcement rules (load-bearing)
+
+- **Not in `authorized_assets` = denied.** Wildcards do not expand into
+  denylisted carve-outs; subdomains of a denied asset are denied.
+- **Stricter reading wins** on every feed-vs-page or intra-page conflict.
+- **`unknowns` default restrictive**: unstated automation = validation-required;
+  unstated rps = <=1; unstated safe harbor = treat as absent.
+- **The manifest is the only scope authority.** Past runs, memory graph nodes,
+  and older manifests never authorize anything.
+- **Prohibited-method ceilings are hard.** A worker that cannot operate under
+  the ceiling for a target is not dispatched there.
+
+## Worked example
+
+Policy text (fake program "Acme Corp"):
+
+> In scope: `*.acme.example`, `api.acme.example`. Out of scope:
+> `status.acme.example`, any third-party service. No DoS testing, no social
+> engineering, no automated scanners. Tooling must stay under 5
+> requests/second. Create your own test accounts. Acme provides safe harbor.
+> Reports generated solely by unverified AI tools will be closed as N/A.
+
+Produces (excerpt):
+
+```markdown
+## authorized_assets
+- asset: "*.acme.example"   type: wildcard-domain  eligible_for_bounty: true
+- asset: "api.acme.example" type: domain           eligible_for_bounty: true
+## hard_denylist
+- "status.acme.example"     # wildcard carve-out
+- pattern: "third-party:*"
+## prohibited_methods
+- method: dos                 blocks: [flooding, load-testing]    ceiling: G2-capped, manual only
+- method: social_engineering  blocks: [phishing, pretexting]      ceiling: G0
+- method: automated_scanning  blocks: [nuclei, dirb-fuzzing]      ceiling: G1 for automation
+## automation_policy
+ai_output: validation-required   # "unverified AI ... closed as N/A"
+submitter: human
+## rate_limits
+rps_cap: 5
+test_accounts: required           # "create your own"
+## safe_harbor
+status: true
+disclosure: coordinated
+## unknowns
+- "embargo window"
+- "duplicate-handling policy"
+```
+
+Note the AI clause: the program banned *unverified* AI output, not AI itself —
+mapped to `validation-required`, not `banned`. When a program states a harder
+rule (e.g. "no automated or AI-generated reports", as some fintech programs
+do), `ai_output: banned` hard-blocks the pipeline at G0.

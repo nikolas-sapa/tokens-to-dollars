@@ -1,0 +1,17 @@
+# Local state — never commit
+memory/
+knowledge/
+data/
+tools/**/out/
+reports/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Working planning files
+task_plan.md
+progress.md
