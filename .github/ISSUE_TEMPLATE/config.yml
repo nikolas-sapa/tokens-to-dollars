@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Responsible use (read first)
+    url: https://github.com/nikolas-sapa/tokens-to-dollars/blob/main/docs/responsible-use.md
+    about: Authorization gates are load-bearing. Requests to bypass scope, rate, or validation gates will be closed.
+  - name: Security issue in this repo
+    url: https://github.com/nikolas-sapa/tokens-to-dollars/blob/main/SECURITY.md
+    about: Disclose privately via GitHub's security tab. Do not file a public issue.

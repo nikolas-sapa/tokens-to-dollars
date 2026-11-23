@@ -39,3 +39,26 @@ limits inherited from the program's RoE, and parse stdout back into our JSON
 record shape so skills can consume results uniformly. No reimplementing
 crawl, fuzz, or scan logic in Python; if a capability exists as a maintained
 binary, we shell out and normalize.
+
+## ledger
+
+`ledger/ledger.py` parses `memory/ledger.md` — the append-only spend/payout
+table the orchestrator maintains — into the scoreboard: total and per-program
+spend, findings/facts/FPs per program and per technique, cost-per-finding,
+EV (payout dollars / token dollars), open pipeline, and cost-ceiling
+warnings. This is the repo's namesake metric: dollars in, dollars out.
+
+## knowledge-query
+
+`knowledge-query/query.py` searches the `records.jsonl` corpus built by
+ingest-knowledge — by program, weakness/CWE, severity, bounty floor, or
+keyword — and returns hits ranked by bounty then recency. It is what
+`skills/dedupe-check` calls to answer "is this bug already disclosed?"
+before a draft is written.
+
+## bootstrap
+
+`bootstrap.py` creates the local state skeleton — `memory/` lessons files,
+`engagements.md` index, `ledger.md` with its real table headers, plus
+`targets/`, `reports/`, `data/`, `knowledge/` directories. Idempotent; run
+it once after cloning so the orchestrator's append paths exist.

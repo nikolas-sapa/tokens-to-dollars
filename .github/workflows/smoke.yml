@@ -1,0 +1,42 @@
+name: smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: bootstrap local state
+        run: python3 tools/bootstrap.py
+
+      - name: ledger parses a sample ledger
+        run: |
+          cat > /tmp/sample.md <<'EOF'
+          # sample ledger (smoke)
+          | date | program | intent-id | worker | model | in-tokens | out-tokens | est-$ | outcome | finding-id |
+          |------|---------|-----------|--------|-------|-----------|------------|-------|---------|------------|
+          | 2026-01-01 | demo | int-0001 | hunt-idor | opus | 1000 | 500 | 0.05e | finding | F-0001 |
+          | date | program | finding-id | status | amount |
+          | 2026-01-02 | demo | F-0001 | paid | 1500 |
+          EOF
+          python3 tools/ledger/ledger.py --ledger /tmp/sample.md
+
+      - name: wrap manifest gate + missing-binary path
+        run: |
+          cat > /tmp/m.md <<'EOF'
+          # RoE Manifest - smoke
+          ## authorized_assets
+          - asset: "*.example.com" type: wildcard-domain eligible_for_bounty: true
+          ## hard_denylist
+          - "excluded.example.com"
+          ## rate_limits
+          EOF
+          python3 tools/wrap/wrap.py subfinder -d example.com -- --manifest /tmp/m.md || test $? -eq 127
