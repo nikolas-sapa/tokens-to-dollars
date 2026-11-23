@@ -112,6 +112,42 @@ exception applies. Checking this list before writing saves a rejection.
 | Scanner output without exploit | Unverified noise | You built the exploit — then it's a real finding |
 | "Possible" / speculative findings | Triagers reject maybes | Prove the code path, or don't file |
 
+## Multi-finding audit format
+
+Single-finding submissions use the skeleton above. Engagement-level
+output — a code review, an audit pass, an internal findings digest — uses
+the format exemplar in `references/finding-format.md` (adapted from
+cinder's BUG-REPORT.md). Its load-bearing conventions:
+
+- **Every finding is tagged.** `CONFIRMED` = the exact path was traced
+  end to end; `SUSPECTED` = strong evidence, plausible trigger, not fully
+  exercised. The tag sits in the heading — `### 3. CONFIRMED — <what>`
+  — so a reader skims truth-weight, not just titles. Never upgrade a
+  SUSPECTED to CONFIRMED by softening the language; upgrade it by
+  exercising the trigger.
+- **Ranked by likelihood × severity**, not by discovery order. Finding 1
+  is the one the triager should read first.
+- **Each entry carries trigger + blast radius + `file:line`.** The
+  trigger states what input or sequence fires it; the blast radius
+  states what else dies or leaks when it does; every claim is anchored
+  to `path:line` citations a reviewer can grep. Vague locality ("in the
+  auth module") is not a citation.
+- **An "Areas cleared cleanly" section closes the report.** List what
+  was audited and found sound, with the check that cleared it —
+  "frame codec: length checked before allocation, `frame.rs:83-111`".
+  Triagers trust a report that proves negative coverage; silence on a
+  component reads as "not looked at", not "clean".
+- **A one-line-per-finding summary table** between the ranked detail and
+  the cleared section gives the second reader the whole report in ten
+  lines.
+- **Status tags are honest about partiality.** A code defect confirmed
+  in source whose trigger was not exercised is recorded as
+  "CONFIRMED as a code defect, trigger SUSPECTED" — the two halves of
+  the claim keep their own weights.
+
+The full skeleton — section order, heading grammar, the cleared-cleanly
+block — lives in `references/finding-format.md`.
+
 ## Quality gate — 7 questions
 
 A draft may only be written after all seven pass. Any fail routes the

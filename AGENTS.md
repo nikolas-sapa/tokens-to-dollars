@@ -4,6 +4,10 @@ A skill-pack + ingest tools that turn LLM token spend into validated,
 submission-ready bug bounty reports. Bring your own harness and model —
 this repo supplies the method, the gates, and the memory.
 
+**Installing the skills:** `./install.sh` copies `skills/*` into detected
+harness skill dirs (`--list`, `--only <harness>`, `--dry-run`). Paths per
+harness: `docs/install-matrix.md`.
+
 ## The contract
 
 - **`skills/` are instructions.** `SKILL.md` files your harness loads

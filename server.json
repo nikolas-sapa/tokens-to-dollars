@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nikolas-sapa/tokens-to-dollars",
+  "title": "Tokens to Dollars",
+  "description": "Agentic bug-bounty tooling: scope ingest, disclosed-report corpora, and hunt playbooks behind authorization gates.",
+  "version": "0.1.0",
+  "repository": { "url": "https://github.com/nikolas-sapa/tokens-to-dollars", "source": "github" },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "tokens-to-dollars",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

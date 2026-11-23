@@ -74,3 +74,45 @@ as harness-agnostic skills (SKILL.md standard works in Devin/Claude/Codex) +
 thin tool wrappers + ingest pipelines + ledger/scoreboard. Do NOT build a new
 agent runtime — that's the crowded part. The wedge is the economics loop and
 the missing 9 skills, riding our existing private playbooks.
+
+## Wave 2 — mining nikolas-sapa's own repos (6 miners, ~24 repos)
+Portable artifacts found and integrated:
+- toolfence: injection/Unicode regex tables → tools/content-scan +
+  injection-defense signatures
+- clone-attack-security: strict evidence parser (16KB cap, dup-key, sha256
+  binding) → tools/evidence-store
+- helm: redact-before-truncate + secret regexes → tools/evidence-store/redact
+- x402-bounty-radar: competition scoring + funding classification + scam
+  detection + cross-source dedupe → tools/bounty-radar (2nd feed)
+- contribot: aipolicy classifier → scope-parser automation verdicts;
+  checks/engine (override audit, ethics-never-loosened) → safety-gates
+- release-memory-graph-hacks: gap codes + "model may only select facts" +
+  SUPERSEDES lineage → evidence/verifier semantics
+- genai-summit-hackathon-recon: hash-chained audit log + grounding grader →
+  tools/audit-log
+- oss-contribution-swarm/orca: exactly-once worker_done, heartbeat, fenced
+  claims, safe-failure → orchestrator + coverage-ledger settlement
+- resumed-agent-staleness (2,631-run study): provenance tags, CURRENT-value
+  phrasing, verification≠protection → orchestrator memory-trust rules
+- branch-ai: [D-n] decision nodes → exploration graph
+- neatroots: followed-injected-instructions + quote-before-flag →
+  injection-defense trace checks
+- open-agent-order-evidence: receipt schema (notEstablished[], sha256 links)
+  → evidence
+- cinder: BUG-REPORT format (CONFIRMED/SUSPECTED, areas-cleared-cleanly) →
+  reporter; sanitize.rs → injection-defense render note
+- nemocascade: priced-or-silence honesty, escalate-on-verified-failure →
+  token-ledger cost rules
+- co-train: provider-cost precedence, cached-token upper bound → token-ledger
+- sac-capital: calibration (brier_by_band), canonical-JSON commitments,
+  DailyBudget → evals + evidence
+- sigeval: wilson/two-proportion/holm → evals/fprate real CI gate
+- hackathon-skill: install.sh + multi-harness manifests + 134-line MCP shim →
+  repo distribution + tools/mcp-server.py
+- skillswitch: skillsDirs map → docs/install-matrix.md (manages, not installs)
+- grip-browser: injection.py + CDP browser → injection-defense + wrap table
+- paraloom-core: real program policy doc → scope-parser fixture
+- awesome-mcp-servers: security MCP shortlist → docs/mcp-integrations.md
+- agentic-pipeline (SKIP — Postgres violates stdlib), aegis-demo/polpo/
+  learn-ml/perch-mcp (SKIP), orca/hermes-agent/openclaw dirs empty locally
+  (real content lives in oss-contribution-swarm/orca/)

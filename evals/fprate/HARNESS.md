@@ -63,13 +63,24 @@ than any single number.
 
 ## CI gate
 
-This harness is the repo's own quality gate:
+This harness is the repo's own quality gate, enforced by `stats.py`
+(stdlib — a proportion, not a vibes diff):
 
 - Any change to `skills/hunt/` playbooks, validator configs, or
   `skills/reporter` templates runs the harness on the pinned corpora.
-- Regression rule: submit-worthy % may not drop more than a few points
-  (set the bound from the recorded baseline; start strict, e.g. 5), and FP
-  count on the negative control may not increase.
-- New playbooks ship disabled until they post a matrix row.
+- Regression rule: a technique's submit-worthy rate may not drop
+  *significantly* vs the recorded baseline — pooled two-proportion z-test,
+  Holm-corrected across the suite so one marginal drop can't false-alarm
+  the gate. FP count on the negative control may not increase.
+
+```bash
+# after each harness run, emit results.csv rows: technique,total,submitworthy
+python3 evals/fprate/stats.py baseline save results.csv baseline.json  # once, or on intentional re-baseline
+python3 evals/fprate/stats.py check results.csv baseline.json --alpha 0.05
+# -> per-technique verdict table; exit 1 if any Holm-adjusted p < alpha
+```
+
+- New playbooks ship disabled until they post a matrix row (no baseline row
+  = reported `new`, not gated yet).
 
 The scoreboard is the contract: claims without a scoreboard are marketing.

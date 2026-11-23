@@ -1,6 +1,6 @@
 ---
 name: token-ledger
-description: Per-intent token spend and payout accounting. The scoreboard skill — every closed intent gets a ledger line, every finding gets payout tracking, all metrics derived on demand. Answers "dollars in, dollars out."
+description: Per-intent token spend and payout accounting. The scoreboard skill — every closed intent gets a ledger line, every finding gets payout tracking, all metrics derived on demand. Cost-honesty rules: provider-reported beats computed, priced-or-silence totals, cheap-first escalate-on-verified-failure routing. Answers "dollars in, dollars out."
 ---
 
 # token-ledger
@@ -35,8 +35,10 @@ One line per **closed** intent (a unit of dispatched work, see
   - `fact` — no vuln, but durable knowledge produced (asset map, fingerprint).
   - `FP` — flagged, rejected by validation or review. Real burn; log it.
   - `blocked` — killed by scope/RoE, dedupe, or cost ceiling. Still cost tokens.
-- `est-$` — bare number when computed from real usage counts (`4.87`), `e`
-  suffix when estimated (`0.62e`). Never mix silently.
+- `est-$` — the suffix declares the basis: `p` provider-reported (`4.87p`),
+  `u` computed upper bound (`5.20u`), `e` estimated (`0.62e`), `?` not
+  priced. Bare number = computed from real usage at named rates. Never mix
+  silently — the marker is part of the number.
 
 ### Payout rows
 
@@ -72,6 +74,35 @@ Rows are costed at the rate in effect at write time:
 
 `est-$ = (in-tokens / 1M × rate-in) + (out-tokens / 1M × rate-out)`.
 Rates above are examples; check your provider's current pricing.
+
+## Cost honesty
+
+- **Provider beats computed.** A provider-reported `cost` outranks any
+  arithmetic here — it already knows cache discounts, tiers, and rounding.
+  Mark the row `p`.
+- **Cached input tokens are a separate quantity.** `prompt_tokens`
+  excludes cache reads, which live in `cached_input_tokens` and are
+  usually billed at a discount. Track them beside `in-tokens` (notes or a
+  dedicated column), priced at a cached rate when configured — at full
+  input rate otherwise, flagged `u` (upper bound). `reasoning_tokens` are
+  already inside `out-tokens`; never add them twice.
+- **Priced or silence.** A total is reported only when every row in it is
+  priced. Any `e`/`?` member makes the total "unavailable (pricing
+  incomplete)" — never invent a dollar figure to fill the gap. `$0.00`
+  reads as free, not unmeasured.
+- **Name the rates.** Every computed figure records the rates behind it
+  (row notes or ledger header: `rates: in=$3/M out=$15/M`). A dollar
+  figure with no rate beside it cannot be audited — quote it with its
+  rates or not at all.
+- **Cheap first, escalate on verified failure.** Route each intent to the
+  cheapest model plausibly able to run the technique; escalate one tier
+  only when a deterministic validator says the attempt failed — replay
+  mismatch, rejected invariant test, tool refusal, missing artifact. A
+  worker's own sense it is struggling is not a validator. Each tier is its
+  own row (model + cost recorded); which tier solved it and the first-tier
+  success rate feed `../orchestrator`'s yield routing. The failed step's
+  evidence rides the escalated packet — escalation continues the attempt,
+  it does not restart it.
 
 ## Derived metrics (computed on demand, never stored)
 

@@ -1,0 +1,13 @@
+{
+  "name": "tokens-to-dollars",
+  "owner": { "name": "Nikolas Sapalidis", "url": "https://github.com/nikolas-sapa" },
+  "metadata": { "description": "Marketplace hosting the tokens-to-dollars plugin." },
+  "plugins": [
+    {
+      "name": "tokens-to-dollars",
+      "description": "Agentic bug-bounty skill-pack: orchestrated hunt playbooks, scope enforcement, dedupe, evidence gates, token-to-dollar ledger.",
+      "version": "0.1.0",
+      "source": "./"
+    }
+  ]
+}

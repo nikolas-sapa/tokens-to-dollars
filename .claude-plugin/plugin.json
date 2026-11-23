@@ -1,0 +1,10 @@
+{
+  "name": "tokens-to-dollars",
+  "version": "0.1.0",
+  "description": "Agentic bug-bounty skill-pack: 10 skills for orchestrated hunts — scope parsing, authorization gates, dedupe, evidence, reporting, and a token-to-dollar ledger.",
+  "author": { "name": "Nikolas Sapalidis", "url": "https://github.com/nikolas-sapa" },
+  "homepage": "https://github.com/nikolas-sapa/tokens-to-dollars",
+  "repository": "https://github.com/nikolas-sapa/tokens-to-dollars",
+  "license": "Apache-2.0",
+  "keywords": ["bug-bounty", "security", "agent-skills", "hackerone", "pentesting", "orchestration", "claude-code", "codex", "cursor", "devin"]
+}

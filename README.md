@@ -53,6 +53,9 @@ tools. Bring your own harness and model.
 | `ingest-knowledge` | Pulls payout-labeled disclosed-report corpora (10k+ reports) for RAG/few-shot priming |
 | `wrap` | Thin adapters around the atomic tools hunters actually use (subfinder, httpx, nuclei, katana, trufflehog, ffuf, Burp MCP) — wrap, never reinvent |
 
+External tool servers (Burp, ZAP, Ghidra, live-browser attach) are wired
+separately — see `docs/mcp-integrations.md`.
+
 **`evals/` — receipts, not vibes**
 
 | Harness | Proves |
@@ -77,6 +80,19 @@ python3 tools/ingest-knowledge/ingest_knowledge.py --out-dir knowledge/
 The orchestrator wakes, loads program memory, parses the RoE manifest,
 dispatches intent after intent to workers, and writes every dollar spent and
 found into `memory/ledger.md`.
+
+## Install
+
+```bash
+./install.sh --list          # which harnesses are detected, and where skills land
+./install.sh                 # copy all skills/* into every detected harness
+./install.sh --only claude   # or just one (claude|codex|cursor|gemini|devin|windsurf|kiro|opencode|factory|amp)
+./install.sh --dry-run       # print what would happen, change nothing
+```
+
+Manual fallback for anything else: copy `skills/<name>/` into your harness's
+skills dir — each skill is a self-contained directory (`SKILL.md` +
+`references/`). Per-harness paths and quirks: `docs/install-matrix.md`.
 
 ## The honest part
 

@@ -1,0 +1,5 @@
+{
+  "name": "tokens-to-dollars",
+  "version": "0.1.0",
+  "description": "Agentic bug-bounty skill-pack: orchestrated hunt playbooks, scope/RoE enforcement, dedupe, evidence gates, and a token-to-dollar ledger. Stdlib Python, offline."
+}

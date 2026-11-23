@@ -1,6 +1,6 @@
 ---
 name: coverage-ledger
-description: Fleet anti-collision ledger — a per-program coverage map so parallel worker agents claim surfaces instead of duplicating work. Claim protocol, exhaustion semantics, handoff notes.
+description: Fleet anti-collision ledger — a per-program coverage map so parallel worker agents claim surfaces instead of duplicating work. Claim protocol, heartbeat windows, exactly-once settlement and fenced-claim semantics, exhaustion semantics, handoff notes.
 ---
 
 # Coverage Ledger
@@ -55,12 +55,36 @@ Column rules:
    workers from tearing each other's writes.
 3. **First worker to enumerate a surface adds its table row** (with
    AS-node anchor) before claiming it.
-4. **Release on close, always** — including aborts and timeouts:
+4. **Heartbeat while held.** Per heartbeat window (default 30 min; the
+   program manifest may override) the holding worker appends
+   `<UTC> <intent-id> HEARTBEAT <surface>`. A heartbeat proves liveness,
+   never progress — it keeps the claim alive; it does not make the work
+   done.
+5. **Release on close, always** — including aborts and timeouts:
    `<UTC> <intent-id> RELEASE <surface> status=<final> techniques=<list>`.
    Table row status is updated at release; last log line wins.
-5. **Stale claims.** A `CLAIM` older than the program's heartbeat window
-   (default 4h) with no activity line may be taken: append
+6. **Stale claims.** A `CLAIM` goes stale the moment one heartbeat window
+   passes with no `HEARTBEAT` or other activity line from the holder —
+   heartbeats are how a claim stays alive; when they stop, the claim
+   starts dying. A stale claim may be taken: append
    `STEAL <surface> from <intent-id>` and continue.
+
+## Settlement rules
+
+- **Exactly-once settle.** One `RELEASE` per claim, ever — the settlement
+  line, carrying final status and techniques tried. A crashed worker
+  leaves an unpaired `CLAIM`; it settles through the stale-claim path
+  above, never through a second release written by someone else.
+- **Fenced claims cannot write.** `STEAL` revokes the old holder's
+  ownership, not just its priority: a fenced worker's late `RELEASE`,
+  `HEARTBEAT`, or graph write is ignored — its surviving contribution is
+  its raw trace and the notes column. Silence never means fenced; only a
+  logged `STEAL` (or explicit orchestrator revocation) does.
+- **Re-claim after fencing.** A fenced worker that is actually still
+  alive and wants the surface re-claims it under a new intent-id — it
+  never resumes writing under the stolen one.
+- **STEAL is for the dead, not the slow.** A heartbeating claim is held,
+  full stop.
 
 ## Exhaustion semantics
 

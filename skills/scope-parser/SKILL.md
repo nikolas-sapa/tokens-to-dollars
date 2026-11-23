@@ -147,3 +147,49 @@ Note the AI clause: the program banned *unverified* AI output, not AI itself —
 mapped to `validation-required`, not `banned`. When a program states a harder
 rule (e.g. "no automated or AI-generated reports", as some fintech programs
 do), `ai_output: banned` hard-blocks the pipeline at G0.
+
+## Automation policy — verdict taxonomy
+
+The automation clause gets a classifier pass, not a vibe read (ported from
+contribot's `aipolicy.ts`). Each candidate sentence — any line matching AI /
+LLM / automation / machine-generated terms — is classified, and the verdicts
+roll up:
+
+| Verdict | Meaning | Manifest mapping |
+|---|---|---|
+| `banned` | ≥1 negative-matching clause, zero positive | `ai_output: banned` — hard-blocks at G0 |
+| `welcomed` | ≥1 positive clause, zero negative | `ai_output: stated-allowed` |
+| `ambiguous` | both polarities present, or AI terms appear with no clear polarity | `validation-required` + the evidence lines kept for the human |
+| `unmentioned` | no AI/automation clause found | `validation-required` (default restrictive, per `unknowns`) |
+
+Every clause that fed the verdict is kept as an evidence line
+(`<source>: <clause>`) — the manifest's `notes` field carries them so the
+human can audit the call.
+
+**Negation traps** — the three ways a naive "contains 'not'" classifier
+misfires, handled explicitly:
+
+| Trap | Shape | Correct read |
+|---|---|---|
+| `NEGATED_POSITIVE` | "AI reports are **not** permitted / not welcome / never allowed" | Negative — the negation attaches to a permission word |
+| `DOUBLE_NEGATIVE` | "**not** against / does not prohibit AI assistance" | Positive — negating a prohibition word cancels to a permission |
+| `NULL_CONTEXT` | "**no** restrictions on tooling / no policy on AI use" | Not a ban — "no" scopes a noun (policy, restrictions), not the activity |
+
+Worked clause extraction (fake + real policy lines):
+
+| Policy clause | Verdict | Evidence line |
+|---|---|---|
+| "Reports generated solely by unverified AI tools will be closed as N/A" | negative → `validation-required` | `policy: reports generated solely by unverified ai tools will be closed` |
+| "We do not accept AI-generated submissions" | negative → `banned` | `policy: we do not accept ai-generated submissions` |
+| "AI-assisted research is welcome; humans must verify" | positive → `stated-allowed` | `policy: ai-assisted research is welcome` |
+| "Submissions are not permitted to be machine-written" | `NEGATED_POSITIVE` → `banned` | `policy: not permitted to be machine-written` |
+| "Nothing in this policy restricts your tooling" | `NULL_CONTEXT` → not a ban; no AI verdict | `policy: no restrictions on tooling` |
+| "We are not opposed to automation" | `DOUBLE_NEGATIVE` → positive | `policy: not opposed to automation` |
+
+Mixed pages (a program welcoming AI recon but banning AI-written reports)
+land `ambiguous` — both evidence lines are kept and `validation-required`
+applies, which is the conservative reading anyway.
+
+A second, real-policy worked example — a full severity/USD table,
+numbered exclusions, and channel-by-severity reporting rules — is in
+`references/paraloom-policy-example.md`.
