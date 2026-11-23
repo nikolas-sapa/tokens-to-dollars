@@ -18,6 +18,10 @@ and worker dispatch in later gates reads this file and nothing else.
 2. The program's public policy page, fetched live at run time
    (`testing_policy_url`, falling back to the platform program page). Store
    the SHA-256 of the fetched body as `policy_hash`; it drives staleness.
+3. The platform's own ToS / code of conduct. Platform rules bind on top of
+   the program page — the Immunefi Safe-Harbor clickwrap accepted at signup
+   is stricter than most program pages. Same stricter-reading
+   reconciliation as the page itself.
 
 Never work from memory or a stale fetch. If the policy fetch fails, still emit
 a manifest seeded from `programs.json` with everything else in `unknowns`.
@@ -82,11 +86,13 @@ contact:                        # report channel; read by reporter's channel pic
 
 ## automation_policy
 ai_output: validation-required   # stated-allowed | validation-required | banned
+ai_disclosure: unstated          # required | incentivized | not-required | unstated
 submitter: human                 # ALWAYS human — autonomous submission is out of scope
 
 ## rate_limits
 rps_cap: null                    # null = unstated -> default-safe profile (<=1 rps, jittered)
 test_accounts: unstated          # required | provided | forbidden | unstated
+submission_cost: null            # optional — YesWeHack credits, Cantina deposits, Bugcrowd IDV throttles
 notes: ""
 
 ## safe_harbor
@@ -104,7 +110,8 @@ embargo_days: null
 
 - **Not in `authorized_assets` = denied.** Wildcards do not expand into
   denylisted carve-outs; subdomains of a denied asset are denied.
-- **Stricter reading wins** on every feed-vs-page or intra-page conflict.
+- **Stricter reading wins** on every feed-vs-page, page-vs-platform-ToS,
+  or intra-page conflict.
 - **`unknowns` default restrictive**: unstated automation = validation-required;
   unstated rps = <=1; unstated safe harbor = treat as absent.
 - **The manifest is the only scope authority.** Past runs, memory graph nodes,
@@ -165,12 +172,19 @@ roll up:
 |---|---|---|
 | `banned` | ≥1 negative-matching clause, zero positive | `ai_output: banned` — hard-blocks at G0 |
 | `welcomed` | ≥1 positive clause, zero negative | `ai_output: stated-allowed` |
+| `bounty-ineligible` | AI reports accepted but excluded from payout (the NodeBB class) | `ai_output: stated-allowed` + `notes` carries the unpaid flag — the reporter must not price a reward |
 | `ambiguous` | both polarities present, or AI terms appear with no clear polarity | `validation-required` + the evidence lines kept for the human |
 | `unmentioned` | no AI/automation clause found | `validation-required` (default restrictive, per `unknowns`) |
 
 Every clause that fed the verdict is kept as an evidence line
 (`<source>: <clause>`) — the manifest's `notes` field carries them so the
 human can audit the call.
+
+`ai_disclosure` rides alongside `ai_output` — a separate axis recording
+whether the program demands AI involvement be declared. Intigriti and
+PubNub mandate it; Goldman pays a $50 bonus for it (`incentivized`).
+`required`/`incentivized` makes the reporter emit its AI-methodology
+block; `unstated` defaults to omitting it.
 
 **Negation traps** — the three ways a naive "contains 'not'" classifier
 misfires, handled explicitly:

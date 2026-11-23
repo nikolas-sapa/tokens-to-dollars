@@ -69,6 +69,23 @@ Asset: <manifest line id>. Bug class: <manifest line id>.
 Dedupe: <verdict + corpus checked>. Account: <test account + role>.
 ```
 
+## AI-methodology block (conditional)
+
+Emitted only when the manifest's `ai_disclosure` is `required` or
+`incentivized` — omit the section entirely on `not-required`/`unstated`.
+One block, placed before Scope:
+
+```markdown
+## Methodology
+Tooling: AI-assisted recon + manual verification and reproduction.
+Attestation: every claim in this report was manually verified and
+reproduced by the named researcher.
+```
+
+The attestation is a claim the submitter stands behind. If the finding
+was never manually reproduced, the draft fails the quality gate — the
+block does not launder an unverified finding.
+
 ## Steps-to-reproduce rules
 
 - Every request is pasted verbatim from `evidence/<finding-id>/request.txt`.
@@ -76,6 +93,9 @@ Dedupe: <verdict + corpus checked>. Account: <test account + role>.
 - Name the test account and role used. Never real user data.
 - Core trigger lands in the first 3 steps; setup and cleanup go last.
 - If the PoC needs a script or HTML file, inline it and reference `poc.*`.
+- A video PoC is a supplement, never a replacement: <=2 minutes, stored
+  under `evidence/<finding-id>/`, and the report must still repro from
+  the written steps alone.
 - End with the observable result: what the triager sees that proves the bug.
 
 ## Impact statement formula
@@ -91,7 +111,7 @@ demonstrates. "Could potentially" is a banned phrase.
 |---|---|---|---|---|
 | HackerOne | Program's own severity table; weakness dropdown must match report class | `[Class] on <host> allows <impact>` | Weakness (CWE) field, impact text box | Severity inflation is the #1 credibility killer with H1 triage |
 | Bugcrowd | VRT — cite the VRT node and resulting P-level | Same as H1 | VRT category, target picker, CVSS if asked | Wrong VRT node = bounce before technical review |
-| Intigriti | Program severity table, CVSS fallback | Same as H1 | Endpoint + weakness fields, researcher notes | Programs here run lean triage; sloppy repro = instant N/A |
+| Intigriti | Program severity table, CVSS fallback | `[asset] - [vuln] - /endpoint` | Endpoint + weakness fields, researcher notes | Programs here run lean triage; sloppy repro = instant N/A. Validate the PoC on a fresh account / clean instance before drafting |
 | YesWeHack | CVSS score + vector required in the form | Same as H1, French accepted on FR programs | CVSS base + vector string, CWE | Form blocks submission without a valid vector |
 | Immunefi | Impact tiers priced in USD of funds at risk | `[Contract/function] <class> leads to <fund impact>` | Fork-test PoC at pinned block, decoded tx trace, funds-at-risk math, chain + block stated | "Theoretical" impact tiers are rejected; price from on-chain state, show the math |
 
@@ -117,11 +137,11 @@ Channel decision:
     Subject: `[Security] <finding summary> — <program>`.
   - A disclosure timeline (90-day default) goes in the body — a mail
     without one reads as extortion.
-  - The checklist line gains `channel:email to <address>` plus four
+  - The checklist line gains `channel:email to <address>` plus five
     pre-send checks.
 
 Same quality gate, same evidence rules, same never-submits rule. The
-always-rejected list below applies to email too, plus two email-only
+always-rejected list below applies to email too, plus three email-only
 additions in the reference.
 
 ## Always-rejected list
@@ -177,9 +197,9 @@ cinder's BUG-REPORT.md). Its load-bearing conventions:
 The full skeleton — section order, heading grammar, the cleared-cleanly
 block — lives in `references/finding-format.md`.
 
-## Quality gate — 7 questions
+## Quality gate — 9 questions
 
-A draft may only be written after all seven pass. Any fail routes the
+A draft may only be written after all nine pass. Any fail routes the
 finding back to validation, not to prose workarounds.
 
 1. **Attacker real?** Named actor + required access level, not "anyone".
@@ -192,6 +212,11 @@ finding back to validation, not to prose workarounds.
    verdict in the draft footer.
 7. **Impact priced by the program's own table?** Severity argued against
    this program's published tiers, not a generic scale.
+8. **Expected vs actual stated?** The draft names what the system should
+   do and what it actually does — not just "a bug exists".
+9. **Environment asserted?** Prod vs staging (and version/commit) is
+   declared, including any severity multiplier the program applies to
+   production impact.
 
 ## Calibration notes
 

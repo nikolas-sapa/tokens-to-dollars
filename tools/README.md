@@ -13,7 +13,10 @@ disclose/diodb, and the Immunefi public API) and normalizes every program
 into one schema: platform, handle, payout ceiling, safe-harbor flag, in/out
 of scope target lists, and policy URL. It dedupes on
 `(platform, handle-or-name)` and emits `programs.json`, a `programs.tsv`
-ranked by max payout, and an `index.json` of per-source fetch status. Use it
+ranked by max payout, and an `index.json` of per-source fetch status. diodb
+records also carry a `contact` block (report email, contact/security.txt and
+PGP-key URLs, preferred languages) plus `disclosure_timeline_days` and
+`launch_date`, matching the scope-parser manifest's contact fields. Use it
 to pick tonight's targets and to seed the scope-parser skill with each
 program's machine-readable scope before any agent touches it.
 
@@ -22,8 +25,14 @@ program's machine-readable scope before any agent touches it.
 `ingest-knowledge/ingest_knowledge.py` builds the bug-knowledge corpus used
 for RAG and few-shot priming: SecurityTalent/bugskill-ai's public H1 report
 dump (rediscovered via the GitHub trees API if the path moves), ajaysenr's
-HackerOne disclosed-reports index, xdavidhu's Google VRP writeups CSV, and
-sayan011's Immunefi writeups list. Output is `records.jsonl` — one
+HackerOne disclosed-reports index, xdavidhu's Google VRP writeups CSV,
+sayan011's Immunefi writeups list, a bounded slice of trickest/cve writeups
+(`--trickest-cap`, default 500 newest), SunWeb3Sec/DeFiHackLabs incident
+index rows, per-class aggregate counts from nuclei-templates (one
+`nuclei:<class>` record per top-level dir), n132/ARVO's OSS-Fuzz
+`metadata.jsonl` index (soft-skips if it ever exceeds 50 MB), and
+reddelexc/hackerone-reports' `data.csv` of disclosed H1 reports. `--list`
+prints the source names. Output is `records.jsonl` — one
 `{source, title, program, weakness, severity, bounty_usd, url, date}` row per
 report, best-effort mapped — plus `knowledge-index.json` with per-source
 counts. Content is author-owned: mirror internally, never redistribute.

@@ -79,6 +79,11 @@ def base(platform, source, ts):
         "in_scope": [],
         "out_of_scope": [],
         "testing_policy_url": None,
+        "contact": {"email": None, "url": None, "source": None,
+                    "securitytxt": None, "encryption": None,
+                    "languages": None},
+        "disclosure_timeline_days": None,
+        "launch_date": None,
         "source": source,
         "fetched_at": ts,
     }
@@ -133,6 +138,11 @@ def norm_lissy93(platform, data, ts, source):
     return out
 
 
+DIODB_CONTACT = {"email": "contact_email", "url": "contact_url",
+                 "securitytxt": "securitytxt_url", "encryption": "pgp_key",
+                 "languages": "preferred_languages"}
+
+
 def norm_diodb(platform, data, ts, source):
     out = []
     for p in data or []:
@@ -144,6 +154,14 @@ def norm_diodb(platform, data, ts, source):
         r["handle"] = slug_from(r["url"])
         r["safe_harbor"] = sh_bool(p.get("safe_harbor"))
         r["testing_policy_url"] = r["url"]
+        for k, src in DIODB_CONTACT.items():
+            v = p.get(src)
+            r["contact"][k] = (v.strip() or None) if isinstance(v, str) else (v or None)
+        if any(r["contact"].values()):
+            r["contact"]["source"] = "diodb"
+        r["disclosure_timeline_days"] = p.get("disclosure_timeline_days") or None
+        v = p.get("launch_date")
+        r["launch_date"] = v.strip() or None if isinstance(v, str) else (v or None)
         out.append(r)
     return out
 
@@ -198,9 +216,15 @@ def dedupe_key(r):
 
 
 def merge(a, b):
-    for k in ("handle", "name", "url", "max_payout", "safe_harbor", "testing_policy_url"):
+    for k in ("handle", "name", "url", "max_payout", "safe_harbor",
+              "testing_policy_url", "disclosure_timeline_days", "launch_date"):
         if a.get(k) in (None, "", []):
             a[k] = b.get(k)
+    ca = a.get("contact") or {}
+    for k, v in (b.get("contact") or {}).items():
+        if ca.get(k) in (None, "") and v not in (None, ""):
+            ca[k] = v
+    a["contact"] = ca
     a["excluded_methods"] = sorted(set((a.get("excluded_methods") or [])
                                        + (b.get("excluded_methods") or [])))
     for k in ("in_scope", "out_of_scope"):

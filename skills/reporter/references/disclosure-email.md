@@ -47,6 +47,9 @@ Summary: <3 lines — what, where, why it matters. No greeting preamble.>
 Affected asset: <asset + environment — prod/staging, version or commit
 if known, manifest scope line>
 
+Actively exploited: <yes | no | unknown — evidence of in-the-wild use or
+scanner hits; "yes" may start the vendor's EU CRA clocks>
+
 Reproduction:
 1. <setup — own test account, role, starting state>
 2. <verbatim request or action from evidence/<finding-id>/>
@@ -61,15 +64,20 @@ by filename, never pasted inline>
 
 Suggested fix: <concrete — check X before Y; not "sanitize input">
 
-Disclosure timeline: I plan to publish in 90 days from this mail (or per
-your policy's stated window); adjustable for a reasonable remediation
-timeline — tell me what you need.
+Disclosure timeline: I plan to publish <program-stated window, else 90
+days> from this mail; adjustable for a reasonable remediation timeline —
+tell me what you need.
 
 Reporter: <name/handle>. Reply to this address; PGP fingerprint <fp> if
 you encrypt. Research under <policy URL>, test account <id>.
 ```
 
 Wrap ~72 chars, ASCII; match `Preferred-Languages` if given.
+
+The 90-day figure is a declining ceiling, not a standard — Google P0
+already moved 90 to 60 to 30 days for exploited bugs. Never promise a
+window longer than the vendor's own published policy; when the policy
+states one, quote it instead.
 
 ## Safety and packaging
 
@@ -84,14 +92,15 @@ Wrap ~72 chars, ASCII; match `Preferred-Languages` if given.
 
 ## Always-rejected — email additions
 
-The list in `../SKILL.md` applies unchanged. Email adds two:
+The list in `../SKILL.md` applies unchanged. Email adds three:
 
 | Finding class | Why rejected |
 |---|---|
 | "Found by scanner" output without a built exploit | Unverified noise — worse by email, where no triage queue absorbs it |
 | Mass-mailed templated findings | The spray pattern — same body to dozens of contacts — is why programs stopped reading `security@` |
+| Payment request in the first email | A compensation ask before triage reads as extortion — request payment only when the program publicly advertises rewards; policy silent on rewards means no compensation language at all |
 
-Both burn the address itself — programs abandon published contacts.
+All three burn the address itself — programs abandon published contacts.
 
 ## SUBMIT-CHECKLIST — email variant
 
@@ -101,16 +110,20 @@ The line keeps its shape and gains the channel:
 - [ ] <finding-id> — <class> on <surface> — severity <tier> — evidence ok — dedupe clean — channel:email to <address> — pending human send
 ```
 
-Four pre-send checks:
+Five pre-send checks:
 
 1. **Recipient verified from a policy source?** Address from
    security.txt, diodb, or policy page via the manifest — no guesses.
 2. **Evidence attached as files?** Every claim maps to an attachment;
    nothing inline, no real-user data.
-3. **Timeline stated?** 90-day default or the program's window is in the
-   body — a mail without a timeline reads as a threat.
+3. **Timeline stated?** The program's stated window — or the 90-day
+   fallback — is in the body; never longer than the vendor's own policy.
+   A mail without a timeline reads as a threat.
 4. **PGP if offered?** Published key noted in the draft; encrypt-or-not
    was the submitter's explicit call.
+5. **Exploitation declared?** `Actively exploited` is filled. `yes` may
+   start the vendor's EU CRA clocks (24h early warning, 72h
+   notification) — say it plainly, don't bury it.
 
 Log the send like a platform submission: `submitted`, channel `email`,
 in `memory/ledger.md`.

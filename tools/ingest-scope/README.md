@@ -27,7 +27,7 @@ Individual source failures are tolerated: the source is marked `error` in
 |---|---|---|
 | arkadiyt/bounty-targets-data | `hackerone`, `bugcrowd`, `intigriti`, `yeswehack`, `hackenproof` | per-platform JSON; `hackenproof_data.json` currently 404s upstream (kept for when the feed returns, fails soft) |
 | lissy93/bug-bounties API | `independent` | `company`/`slug`/`max_payout`/`safe_harbor`; no platform field upstream, so all records land under `independent` |
-| disclose/diodb | `independent` | `program_name`/`policy_url`/`safe_harbor` |
+| disclose/diodb | `independent` | `program_name`/`policy_url`/`safe_harbor` plus report-channel fields (`contact_email`, `contact_url`, `securitytxt_url`, `pgp_key`, `preferred_languages` → `contact{}`; `disclosure_timeline_days`, `launch_date` → top level) |
 | Immunefi public API | `immunefi` | `maxBounty` → `max_payout` USD; `assets[]` → `in_scope` |
 
 Dedupe merges records on `(platform, handle-or-name lowercased)`: scalar fields
@@ -63,6 +63,16 @@ sources do not agree on platform identity.
   "out_of_scope": [{"target": "...", "type": "...",
                     "eligible_for_bounty": false, "instruction": "..."}],
   "testing_policy_url": "https://...",
+  "contact": {
+    "email": "security@example.com",
+    "url": "https://example.com/report",
+    "source": "diodb",
+    "securitytxt": "https://example.com/.well-known/security.txt",
+    "encryption": "https://example.com/pgp.txt",
+    "languages": "en"
+  },
+  "disclosure_timeline_days": 90,
+  "launch_date": "2020-01-01",
   "source": "arkadiyt-hackerone",
   "fetched_at": "2026-01-01T00:00:00+00:00"
 }
@@ -82,6 +92,12 @@ Field notes:
   rows carrying the raw policy text in `instruction`.
 - `testing_policy_url`: the program/policy page for manual RoE review. Always
   read it before testing — this catalog is for triage, not authorization.
+- `contact`: report-channel fields matching the scope-parser manifest's
+  `contact` block; only populated for diodb-sourced records today
+  (`contact.source` = `diodb` when any field is set). `url` is the program's
+  web submission/contact page; `securitytxt`/`encryption` are published
+  security.txt and PGP-key URLs. Treat as pointers to verify at manifest
+  time, not authorization.
 
 ## Nightly ingest (GitHub Actions)
 

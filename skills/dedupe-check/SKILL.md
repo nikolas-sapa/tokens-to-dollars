@@ -54,7 +54,10 @@ Search all five; record every query and hit count.
   endpoint, or primitive. Forces an **impact-differentiation paragraph** in
   the report ("prior report #X covered `/logout?next=`; this finding reaches
   the payment frame via `/cart?next=`"), or reroute back to hunt for a more
-  distinct variant.
+  distinct variant. The paragraph must argue two things: **independent
+  fix-ability** (the fix is a separate code change, and separate fixes earn
+  separate rewards) and **impact delta** (what this variant reaches that
+  the original did not).
 - **known-accepted-risk**: the program or platform explicitly lists the class
   as out of scope or always-rejected. Do not report. Ever.
 
@@ -73,7 +76,9 @@ dedupe:
     - source: changelog            queries: 1  hits: 0
     - source: reject_list          queries: 1  hits: 0
   matches:
-    - id: "H1-2345678"  url: "https://hackerone.com/reports/2345678"  overlap: "same class, different param"
+    - id: "H1-2345678"  url: "https://hackerone.com/reports/2345678"
+      overlap: "same class, different param"
+      original_state: resolved            # resolved | triaged | open | unknown
   differentiation_required: false
 ```
 
@@ -99,6 +104,11 @@ reaching the payment frame"), with H1-2345678 cited in `matches`.
   (e.g. `knowledge/` not yet ingested), the verdict says so explicitly.
 - **`partial-overlap` never silently passes**: either the differentiation
   paragraph ships in the report, or the finding goes back for a variant.
+- **A Resolved original is a new report, not a dup.** When a match's
+  `original_state` is `resolved` and the bug is back — or the fix is
+  bypassed — file fresh as "regression/bypass of #N" with the original
+  cited in `matches`; the verdict stays `novel` or `partial-overlap`,
+  never `duplicate`.
 - **Citations are mandatory** for any non-`novel` verdict: list the report
   IDs/URLs that caused it in `matches`.
 - **Dedupe again on retest.** If a finding is revisited days or weeks later,

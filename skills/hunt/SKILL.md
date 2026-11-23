@@ -1,6 +1,6 @@
 ---
 name: hunt
-description: Systematic bug-bounty hunting across two layers — a 110-check coverage catalogue (identity, authorization, API, web, business logic, infrastructure, supply chain, AI systems) plus 11 field-sourced technique playbooks (GraphQL introspection-to-takeover, AI-agent tool abuse, WebSocket/captcha-gated agent endpoints, race conditions, SAML assertion confusion, CSRF token-validation absence, OAuth code/token leakage and low-severity chaining, SSO audience confusion, HTML-to-PDF SSRF, smart-contract/DeFi program scoping, and program-rules extraction with report-quality triage). Includes the staged hunt pipeline (Stage 0 authorization intake through Stage 10 reporting), a 14-role worker roster, and the ten-gate verification standard. Use when hunting on an authorized bug-bounty program or running technique-driven testing on an owned application.
+description: Systematic bug-bounty hunting across two layers — a 110-check coverage catalogue (identity, authorization, API, web, business logic, infrastructure, supply chain, AI systems) plus 14 field-sourced technique playbooks (GraphQL introspection-to-takeover, AI-agent tool abuse, WebSocket/captcha-gated agent endpoints, race conditions, SAML assertion confusion, CSRF token-validation absence, OAuth code/token leakage and low-severity chaining, SSO audience confusion, HTML-to-PDF SSRF, smart-contract/DeFi program scoping, program-rules extraction with report-quality triage, cross-protocol IDOR/BOLA object-diffing, front-end/backend trust-boundary request smuggling and cache poisoning, and SSTI/server-side template injection). Includes the staged hunt pipeline (Stage 0 authorization intake through Stage 10 reporting), a 14-role worker roster, and the ten-gate verification standard. Use when hunting on an authorized bug-bounty program or running technique-driven testing on an owned application.
 ---
 
 # hunt — systematic coverage plus playbook-driven technique
@@ -8,7 +8,7 @@ description: Systematic bug-bounty hunting across two layers — a 110-check cov
 Two layers, complementary:
 
 - **The catalogue is breadth.** `references/check-catalogue.md` carries the 110-check master catalogue across eight categories (ID, AUTH, API, WEB, BIZ, INFRA, SPEC, AIX), the attack-surface inventory fields, the authorization matrix, custom-check rules, and the second-pass gap analysis. Every applicable check gets a recorded disposition — that is what "covered" means, and it is how a surface earns `exhausted` in `../coverage-ledger`.
-- **The playbooks are technique.** `references/playbooks.md` carries the expanded method for PB-1–PB-11 — provenance, tooling, evidence bars, FP-rule refinements — for surfaces where a named technique applies. A check says *what* to test; a playbook says *how*.
+- **The playbooks are technique.** `references/playbooks.md` carries the expanded method for PB-1–PB-14 — provenance, tooling, evidence bars, FP-rule refinements — for surfaces where a named technique applies. A check says *what* to test; a playbook says *how*.
 
 Supporting references: `references/worker-roster.md` (the 14 specialist roles and their per-worker gates), `references/verification.md` (security invariants, the ten-gate FP verification system, confidence states, attack-path outcome classes), `references/exposure-investigation.md` (external-to-internal exposure paths, extortion/breach-claim investigation, authorized internal review).
 
@@ -57,6 +57,9 @@ A proven finding triggers stop-on-proof for that weakness; the hunt continues on
 | PB-9 | SSRF through HTML-to-PDF export pipelines | Server-side PDF/export features, URL→PDF APIs; renderer engines as SSRF primitives | G3 (internal pivoting/metadata endpoints) |
 | PB-10 | Smart-contract and DeFi program scoping | Contract/DeFi bounty programs (Immunefi-style, Safe-style); program scoping, PoC discipline, severity sizing | G2-lab (local forks only; live deployments prohibited) |
 | PB-11 | Program-rules extraction and report quality | Every program engagement — extract rules first, mandatory before writing any report | G2 |
+| PB-12 | Cross-protocol IDOR/BOLA object-diffing | Per-user objects addressable by identifier across REST and GraphQL; two test accounts available; priority-tier deterministic class | G2 |
+| PB-13 | Front-end/backend trust boundary: request smuggling and cache poisoning | Target behind a front-end tier (CDN/proxy/LB); desync probes on owned requests only, unkeyed-input and web-cache-deception testing | G3 (queue-poisoning and H2-downgrade steps; detection limited to own request pairs) |
+| PB-14 | SSTI and the server-side injection family | User-controlled strings rendered through server-side template engines, including agent-toolchain report/PDF/email renderers | G3 (post-identification escalation; detection polyglots at G2) |
 
 ## Standing rules for all playbooks
 

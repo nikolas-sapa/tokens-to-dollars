@@ -1,12 +1,12 @@
 # Reference — Bug Bounty Hunting Playbooks & Report-Quality Triage
 
-Companion to the `hunt` skill (`../SKILL.md`). Covers: expanded method detail for the eleven bug-bounty playbooks (PB-1–PB-11), program-scope and report-quality triage detail, provenance caveats, and FP-rule refinements.
+Companion to the `hunt` skill (`../SKILL.md`). Covers: expanded method detail for the fourteen bug-bounty playbooks (PB-1–PB-14), program-scope and report-quality triage detail, provenance caveats, and FP-rule refinements.
 
 All techniques are for authorized testing only — targets named in the scope manifest, entitled labs, or programs whose written policy permits the technique. Step gates (G0–G3) are defined in `../../safety-gates`; this reference adds the method depth beneath those gates. Report triage and harm-gate mechanics point at `../../reporter`. Where a source is self-published or partially unverifiable, that is stated — no technique is asserted beyond what its source documents.
 
 ---
 
-# PART 1 — PLAYBOOK EXPANSIONS (PB-1–PB-11)
+# PART 1 — PLAYBOOK EXPANSIONS (PB-1–PB-14)
 
 ## PB-1 — GraphQL: introspection-to-takeover
 
@@ -288,6 +288,77 @@ Prior art from the same source: Keybase invite-limit bypass (hackerone.com/repor
 - **Quality matrix:** Low 0.8x / Good 1x / Exceptional 1.2x (capped at $5,000). "No PoC" is an explicit non-qualifying category; "Theoretical or speculative impact" lands Low.
 - **Downgrade ladder:** prior access, victim interaction, exploitability, uncommon configuration, and high-entropy IDs each step the amount down one rung (e.g., $5,000 → $3,133.70); footnote [3] explicitly rejects S1a claims whose PoC pre-provisions a roles/owner binding — design the proof to eliminate preconditions and high-entropy-ID dependencies before writing.
 - **Plumbing:** report at bughunters.google.com/report/vrp (select 'Cloud VRP'); PGP key for sensitive details: https://services.google.com/corporate/publickey.txt.
+
+## PB-12 — Cross-protocol IDOR/BOLA object-diffing
+
+**When it applies:** any application with per-user objects addressable by identifier — REST path/query/body params or GraphQL node lookups — on a program that issues or permits two test accounts. PB-1's access-control step is GraphQL-scoped; this playbook generalizes the two-account diff to every object-bearing protocol surface uniformly. **Priority-tier:** BOLA/IDOR is the deterministic class with the highest payout-per-effort in H1 2025 platform data — run it before speculative techniques.
+
+**Provenance:** method-standard (PortSwigger access-control labs, OWASP API1:2023 Broken Object Level Authorization); no single disclosure — the two-account replay diff is the canonical BOLA test. The payout-per-effort ranking reflects platform payout distributions for BOLA-class reports in H1 2025 data; treat it as a prioritization heuristic, not a per-program guarantee.
+
+### Expanded method
+
+1. **Enumerate object-bearing endpoints:** path params (`/users/{id}`, `/invoices/{id}`), query params (`?doc_id=`), JSON body fields (`{"accountId": ...}`), GraphQL `node(id:)` and Relay global IDs, batch endpoints (`/batch?ids=`, GraphQL aliases and JSON-array batching per PB-1). Grep JS bundles for ID-bearing routes not linked in the UI.
+2. **Create canary objects as account A [G2]:** uniquely marked synthetic objects per the Stage-2 identity prep and `../../evidence` — the canary marks prove which side of the boundary a response came from.
+3. **Replay as account B with A's identifiers [G2]:** identical method, path, and body; only B's session token changes. Every enumerated endpoint gets the pair — absence of a 403 is signal, not noise.
+4. **Diff the response pairs:** status (200 vs 403/404), body-field set (partial-field leaks count — a 200 that redacts `ssn` but returns `email`/`dob` is the finding), and side channels (Content-Length deltas, timing, existence oracles where the 403-vs-404 mapping differs by authorization state).
+5. **Escalate to write ops [G2]:** PATCH/PUT/DELETE against A's canary under B's session; verify committed state by re-reading as A — a 200 response is not proof of a committed write (existing FP rule).
+6. **Test indirect references:** hashed/encoded IDs (base64, HMAC'd, sequential-looking hashes — decode before assuming unguessability), UUIDs leaked in sibling responses, nested objects (`/teams/{t}/members/{m}`), IDOR-through-graph (objects reachable only as nested fields of an authorized parent), and batch/alias sweeps.
+7. **Cross-protocol parity pass:** the same object reachable via REST and GraphQL frequently carries authorization on one path only — re-run the A/B diff on every equivalent resolver and route; include versioned endpoints (`/v1/` vs `/v2/`) and mobile/legacy routes.
+8. **Stop at proof:** one demonstrated cross-account read, plus one committed write where escalation is authorized, per object class — then record the class and move on. Sweeping every ID is evidence-volume, not evidence-quality.
+
+**Tooling:** Burp Repeater with two session profiles (Auth Analyzer / Autorize-style extensions automate the A/B replay matrix), curl + diff for scripted pairs, Turbo Intruder for identifier sweeps within the authorized request budget, base64/jwt decoders for indirect refs.
+
+**Evidence bar:** paired request/response captures (A-authorized vs B-attempted) with canary identifiers visible; committed-state proof for any write finding; the enumeration table showing which endpoint classes were diffed. Store per `../../evidence`.
+
+**FP-rule refinement:** a 403-vs-404 existence oracle or an ID merely appearing in a response is not BOLA — the cross-account object render is. A 200 returning only fields the owner already publishes is not a finding. Conversely, some stacks return 404 instead of 403 by design — prove the object exists as A before recording B's response as a denial.
+
+## PB-13 — Front-end/backend trust boundary: request smuggling and cache poisoning
+
+**When it applies:** targets behind a front-end tier (CDN, reverse proxy, LB doing TLS termination) that can disagree with the backend about request boundaries or cache keys. Shares PB-4's HTTP/2 tooling (`RequestEngine`, single-packet gating, connection warming) — PB-4 races request timing; this playbook exploits request *framing* and keying.
+
+**Provenance:** PortSwigger desync material (James Kettle's CL.TE/TE.CL and HTTP/2-desync research) plus the same group's cache-poisoning and web-cache-deception research; the Next.js middleware-bypass class from the published CVE-2025-29927 (`x-middleware-subrequest`) disclosure. All detection below is limited to own-request probes; anything that can touch other users' queues or shared cache entries is gated accordingly.
+
+### Expanded method — desync
+
+1. **Baseline the front-end pairing [G2]:** identify the proxy chain and each hop's HTTP version — the exploitable surface is a parsing disagreement (H2 front → H1.1 back is the classic shape).
+2. **CL.TE / TE.CL probes [G2, own requests only]:** standard dual-length probes where a smuggled prefix lands inside *your own* follow-up request; detect via timeout deltas (the TE.CL partial-request hang) and response desync. Never leave a dangling smuggled prefix that could splice into another user's request.
+3. **HTTP/2 downgrade paths [G3]:** H2.CL/H2.TE where the front-end honors pseudo-header lengths but translates to Content-Length downstream; header-injection smuggling where `\r\n` inside H2 header values reaches the H1 backend verbatim.
+4. **Deterministic delivery:** Turbo Intruder `Engine.BURP2` as in PB-4 — queue probe and follow-up through one warmed connection so the smuggled sequence lands deterministically; connection-warm first to pin the backend route.
+5. **Response-queue proof [G3, own requests only]:** demonstrate desync by shifting a response boundary — your follow-up request receives the response to your smuggled request. Only ever splice requests you sent; poisoning a queue shared with real users is outside the gates (`../../safety-gates`) regardless of program text.
+
+### Expanded method — cache poisoning and deception
+
+6. **Unkeyed-input probing [G2]:** Param Miner or manual header/param sweeps — `X-Forwarded-Host`, `X-Forwarded-Scheme`, `X-Original-URL`, `X-Rewrite-URL`, `X-Original-Host`, query params outside the cache key. Detection primitive: reflect an owned marker (your own OAST host) into a response field, then check whether it is served back from cache on a cache-buster-free re-request.
+7. **Isolate every key you poison:** carry a unique cache-buster param so the poisoned variant is keyed to your test path — never push an attacker-controlled value into a key serving real users (standing rule: demonstrate the minimal consequence, then stop).
+8. **Web cache deception:** path-extension confusion — `/account/settings/anything.css` or `..%2f` traversal-suffix shapes where the CDN caches by extension while the origin ignores the suffix and returns the authenticated page; confirm the entry is served logged-out.
+9. **Framework-specific keys:** Next.js middleware (the `x-middleware-subrequest` bypass shape, CVE-2025-29927) and internal route/RSC caches — test whether middleware-enforced controls (auth, redirects, CSP headers) are skipped when an internal or edge cache serves the page.
+
+**Evidence bar:** the full probe/follow-up request pair plus observed response order and timing deltas for desync; for cache findings, the poisoned response served *from cache* on an unkeyed re-request with age/cache headers visible. Queue evidence uses only your own request pairs — per `../../evidence`.
+
+**FP-rule refinement:** a reflected `X-Forwarded-Host` value is not poisoning until a cached variant serves it to a subsequent requester; a single TE.CL timeout is weak evidence — corroborate with a second probe shape or the response-boundary shift before claiming desync. Cache-key behavior differs per CDN: verify the entry was shared-keyed, not private or bypassed.
+
+## PB-14 — SSTI and the server-side injection family
+
+**When it applies:** any user-controlled string rendered through a server-side template engine — form fields, headers, uploaded filenames and content, JSON values, error interpolations — plus the AI-adjacent surface where model output is concatenated into template context (agent report generators, PDF builders, email composers; the PB-2 sink match "renders a template → SSTI").
+
+**Provenance:** PortSwigger SSTI material and the standard engine-identification matrix (Jinja2/Twig/FreeMarker/Mako/Velocity/Thymeleaf decision tree); OAST-based blind-variant detection. Payload syntax below is detection-level — post-identification escalation chains are gate-bound.
+
+### Expanded method
+
+1. **Polyglot detection on every reflected input [G2]:** `{{7*7}}`, `${7*7}`, `#{7*7}`, `<%= 7*7 %>` — sweep params, headers (`User-Agent`, `Referer`, `X-Forwarded-*`), uploads (filenames, metadata, document fields), JSON body fields, and deferred render surfaces (email templates, PDF exports — pair with PB-9's rendering map). A rendered `49` is the signal.
+2. **Error-oracle confirmation [G2]:** inject malformed syntax (`{{`) and compare the error surface — verbose template exceptions fingerprint the engine directly; a swallowed error that still evaluates valid syntax is itself diagnostic.
+3. **Time-oracle confirmation [G2]:** where output is not reflected, use engine-appropriate delay payloads; the delay firing is the oracle.
+4. **Identify the engine before escalating:** the `{{7*'7'}}` discriminator — `7777777` (string repeat) for Jinja2/Twig-style semantics vs `49`; then the decision tree: FreeMarker `${}` + `<#assign>`, Velocity `#set`/`$class.inspect`, Thymeleaf `*{...}`/`${T(...)}`, Mako `${}` with `<%! %>` blocks. Record the engine and version markers — payload chains are engine-specific, and sending Jinja2 payloads at a Twig engine wastes budget and misreports the class.
+5. **Blind variants via OAST [G2]:** engine-appropriate expressions that trigger an outbound DNS/HTTP fetch to your own listener; the Collaborator callback is the impact artifact where nothing renders.
+6. **Escalation only after engine confirmation [G3]:** targeted object-graph traversal toward execution — capped at the minimal consequence artifact (read a canary file you planted, render a marker string); never exfiltrate real secrets or pivot (`../../safety-gates`).
+7. **AI-adjacent sweep:** where an agent toolchain renders model-influenced content (report generators, invoice/PDF builders, email composers — the PB-2 capability map), the input surface is whatever steers the model: retrieved docs, job files, tool outputs. Test whether model tokens land in template context as source rather than as escaped text — the confused-deputy variant needs no direct field.
+8. **Stop at proof:** evaluated arithmetic plus the engine fingerprint, plus one canary read where authorized, is the complete chain — do not enumerate the object graph beyond the first confinement break.
+
+**Tooling:** Burp polyglot sweeps + Param Miner for header surfaces, an OAST listener for blind variants, the engine decision tree for payload selection, tplmap for confirmation runs (its automated execution paths belong at G3/lab, not production sweeps).
+
+**Evidence bar:** raw input string and evaluated output side-by-side (the `49`, not the reflected `{{7*7}}`), the discriminator result and engine fingerprint, OAST captures for blind variants, canary-read output for any execution claim — stored per `../../evidence`.
+
+**FP-rule refinement:** literal reflection of `{{7*7}}` is no finding — the engine must evaluate it. A `49` produced client-side (JS template literals, Angular scope expressions) is front-end injection, not SSTI: verify evaluation is server-side by submitting through a non-browser client or checking whether the value persists rendered in a server-generated artifact. Sandbox-restricted evaluation (arithmetic works, object traversal blocked) is still reportable SSTI — report the demonstrated evaluation and the confinement boundary honestly.
 
 ---
 
