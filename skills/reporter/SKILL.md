@@ -95,6 +95,35 @@ demonstrates. "Could potentially" is a banned phrase.
 | YesWeHack | CVSS score + vector required in the form | Same as H1, French accepted on FR programs | CVSS base + vector string, CWE | Form blocks submission without a valid vector |
 | Immunefi | Impact tiers priced in USD of funds at risk | `[Contract/function] <class> leads to <fund impact>` | Fork-test PoC at pinned block, decoded tx trace, funds-at-risk math, chain + block stated | "Theoretical" impact tiers are rejected; price from on-chain state, show the math |
 
+## Channel: email vs platform
+
+The skeleton and gate above assume a platform form. A large share of
+catalog programs take reports by email instead: VDPs and self-hosted
+programs publishing a security.txt contact or diodb `contact_url`,
+programs with no platform presence, and coordinated-disclosure cases
+where the platform path does not apply.
+
+Channel decision:
+
+- Platform page exists and the asset is in its scope — platform draft,
+  calibrated per the table above.
+- Otherwise — email draft. Addressing, the template, and packaging rules
+  live in `references/disclosure-email.md`. What differs from a platform
+  draft:
+  - Recipient comes only from the manifest `contact` block
+    (security.txt, diodb, policy page). A guessed address is an
+    `unknowns` entry, and it blocks the draft.
+  - Output is a plain-text mail plus attachment list, not form fields.
+    Subject: `[Security] <finding summary> — <program>`.
+  - A disclosure timeline (90-day default) goes in the body — a mail
+    without one reads as extortion.
+  - The checklist line gains `channel:email to <address>` plus four
+    pre-send checks.
+
+Same quality gate, same evidence rules, same never-submits rule. The
+always-rejected list below applies to email too, plus two email-only
+additions in the reference.
+
 ## Always-rejected list
 
 The following are N/A or Informational on every major platform unless the

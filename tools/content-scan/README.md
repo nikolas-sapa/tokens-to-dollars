@@ -80,6 +80,14 @@ grip's wider format-control range (`U+200B–200F`, `U+2060–206F`, `U+FEFF`,
 bidi). Grip's `<system>` and sentence-excision logic are not ported —
 `inj-hidden-markup` covers the former and markers replace excision.
 
+## flag_corpus.py
+
+`flag_corpus.py --file <path>` (or `--in a --out b`) annotates each record in
+a `.jsonl`/`.json` corpus with `"_untrusted": true`, `"_scan":
+"clean|suspicious|hostile"`, `"_scan_hits": [rule ids]`; hostile records are
+moved to `<file>.quarantine.jsonl`. Ingest tools call it automatically after
+writing `programs.json`, `records.jsonl`, `bounties.jsonl`.
+
 ## Where it fits
 
 `skills/injection-defense` rule 2 — instruction-like strings create a

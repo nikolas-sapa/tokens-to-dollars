@@ -54,6 +54,12 @@ program:      <handle>
 policy_url:   https://...
 fetched_at:   2025-01-14T09:30:00Z
 policy_hash:  sha256:...
+contact:                        # report channel; read by reporter's channel pick
+  email:        null            # report-to address; null = submit via platform
+  source:       null            # security-txt | diodb | policy-page — never guessed
+  securitytxt:  null            # the /.well-known/security.txt that supplied it
+  encryption:   null            # published PGP key URL, if offered
+  languages:    null            # security.txt Preferred-Languages, if given
 
 ## authorized_assets
 # eligible_for_bounty=false assets may be mapped for context but never attacked

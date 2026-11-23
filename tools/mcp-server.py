@@ -6,15 +6,61 @@ to the repo CLI script of the same name — same behavior as running it by hand.
 Run: python3 tools/mcp-server.py   (or point a client's .mcp.json at it)
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
+ROOT = Path(os.environ.get("T2D_ROOT") or TOOLS_DIR.parent).resolve()
+PATH_ARGS = {"log", "sidecar", "out_dir", "file"}
+_TYPES = {"string": str, "boolean": bool, "integer": int,
+          "number": (int, float), "array": list, "object": dict}
+
+
+class InvalidParams(Exception):
+    pass
 
 
 def script(*parts):
     return str(TOOLS_DIR.joinpath(*parts))
+
+
+def safe_path(v):
+    p = Path(v).expanduser()
+    if not p.is_absolute():
+        p = ROOT / p
+    p = p.resolve()
+    if p != ROOT and not str(p).startswith(str(ROOT) + os.sep):
+        raise InvalidParams("path outside workspace root %s: %s" % (ROOT, v))
+    return str(p)
+
+
+def validate_args(schema, args):
+    if not isinstance(args, dict):
+        raise InvalidParams("arguments must be an object")
+    props = schema.get("properties") or {}
+    for k in schema.get("required") or []:
+        if args.get(k) is None:
+            raise InvalidParams("missing required argument: %s" % k)
+    for k, v in args.items():
+        spec = props.get(k)
+        if spec is None:
+            raise InvalidParams("unknown argument: %s" % k)
+        t = spec.get("type")
+        if t in _TYPES and (not isinstance(v, _TYPES[t])
+                            or (t in ("integer", "number")
+                                and isinstance(v, bool))):
+            raise InvalidParams("argument %s must be %s" % (k, t))
+        if "enum" in spec and v not in spec["enum"]:
+            raise InvalidParams("argument %s must be one of %s"
+                                % (k, spec["enum"]))
+        if t == "array":
+            it = (spec.get("items") or {}).get("type")
+            if it in _TYPES and any(not isinstance(x, _TYPES[it]) for x in v):
+                raise InvalidParams("argument %s items must be %s" % (k, it))
+        if k in PATH_ARGS and isinstance(v, str):
+            args[k] = safe_path(v)
 
 
 def flags(args, skip=()):
@@ -70,7 +116,13 @@ TOOLS = {
         "timeout": 180},
     "bounty_radar": {
         "description": "Score + rank bounty opportunities across feeds (competition, funding, scam signals).",
-        "inputSchema": {"type": "object"},
+        "inputSchema": {"type": "object", "properties": {
+            "min_reward": {"type": "number"},
+            "max_competition": {"type": "number"},
+            "sources": {"type": "string"},
+            "include_suspect": {"type": "boolean"},
+            "out_dir": {"type": "string"},
+            "teaser": {"type": "boolean"}}},
         "cmd": lambda a: [sys.executable, script("bounty-radar", "bounty_radar.py"), *flags(a)],
         "timeout": 180},
     "ledger": {
@@ -125,8 +177,7 @@ def run_tool(name, args):
     t = TOOLS.get(name)
     if t is None:
         return err("unknown tool: %s" % name)
-    if not isinstance(args, dict):
-        return err("arguments must be an object")
+    validate_args(t["inputSchema"], args)
     try:
         cmd = t["cmd"](args)
     except (KeyError, TypeError) as e:
@@ -178,7 +229,15 @@ def main():
             if not isinstance(name, str) or name not in TOOLS:
                 resp = err("unknown tool: %s" % name)
             else:
-                resp = run_tool(name, p.get("arguments") or {})
+                try:
+                    resp = run_tool(name, p.get("arguments") or {})
+                except InvalidParams as e:
+                    if rid is not None:
+                        print(json.dumps({
+                            "jsonrpc": "2.0", "id": rid,
+                            "error": {"code": -32602, "message": str(e)}}))
+                        sys.stdout.flush()
+                    continue
         elif method == "ping":
             resp = {}
         else:

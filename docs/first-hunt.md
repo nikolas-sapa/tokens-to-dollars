@@ -167,3 +167,16 @@ Before you check that box:
 
 Agents found it, proved it, priced it, wrote it up — you decided it
 ships. That division of labor is the product.
+
+If the channel is email — the program runs a VDP or publishes a
+security.txt contact instead of a platform page — the checklist line is
+the same, but step 4 becomes "send the mail":
+
+- The address comes from the manifest `contact` block only
+  (security.txt, diodb, policy page). No source, no draft — it's an
+  `unknowns` entry.
+- Draft per `skills/reporter/references/disclosure-email.md`: same
+  evidence rules, plain text, attachments by filename, a stated 90-day
+  disclosure timeline.
+- Program publishes a PGP key? The checklist records it; encrypting is
+  the submitter's call.

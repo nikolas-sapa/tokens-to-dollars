@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -243,6 +244,19 @@ def main():
     index["total_records"] = total
     (out_dir / "knowledge-index.json").write_text(json.dumps(index, indent=2) + "\n")
     log.info("wrote %d records to %s", total, out_dir / "records.jsonl")
+
+    flagger = Path(__file__).resolve().parent.parent / "content-scan" / "flag_corpus.py"
+    try:
+        r = subprocess.run([sys.executable, str(flagger), "--file",
+                            str(out_dir / "records.jsonl")],
+                           capture_output=True, text=True)
+        if r.returncode:
+            log.warning("content-scan flagging failed: %s",
+                        (r.stderr or r.stdout).strip())
+        else:
+            log.info("content-scan: %s", r.stdout.strip())
+    except Exception as e:
+        log.warning("content-scan flagging failed: %s", e)
     return 0
 
 

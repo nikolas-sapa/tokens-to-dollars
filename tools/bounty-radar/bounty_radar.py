@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,6 +98,14 @@ def parse_amount(title, labels):
     return int(n) if n == int(n) else n
 
 
+def num(v):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return int(f) if f == int(f) else f
+
+
 def detect_scam(repo, number, title):
     reasons = []
     owner, _, name = repo.partition("/")
@@ -171,8 +180,9 @@ def fetch_github_labels():
             log.warning("github label query failed (%s): %s", lbl, e)
             continue
         for it in items:
-            if it.get("html_url") not in seen:
-                seen.add(it["html_url"])
+            url = it.get("html_url")
+            if url and url not in seen:
+                seen.add(url)
                 drafts.append(gh_issue_to_draft(it))
     if errs == len(GH_LABELS):
         raise RuntimeError("all GitHub label queries failed (rate limit?)")
@@ -189,6 +199,8 @@ def fetch_github_extras():
             continue
         for it in items:
             url = it.get("html_url")
+            if not url:
+                continue
             if url in by_url:
                 ex = by_url[url]
                 notes = ex["signals"]["source_notes"]
@@ -201,8 +213,9 @@ def fetch_github_extras():
     for topic, note in TOPIC_QUERIES:
         try:
             for r in search_repos("topic:%s" % topic):
-                if r.get("html_url") not in by_url:
-                    by_url[r["html_url"]] = gh_repo_to_draft(r, note)
+                url = r.get("html_url")
+                if url and url not in by_url:
+                    by_url[url] = gh_repo_to_draft(r, note)
         except Exception as e:
             log.warning("github-extras repo query failed (%s): %s", note, e)
     return list(by_url.values())
@@ -272,7 +285,8 @@ def fetch_immunefi():
             "title": "%s -- Immunefi bug bounty" % project,
             "url": url or "", "created_at": p.get("launchDate") or p.get("updatedDate"),
             "comments": 0, "labels": sorted(set(tags)),
-            "amount_usd": p.get("maxBounty"), "max_reward": p.get("maxBounty"),
+            "amount_usd": num(p.get("maxBounty")),
+            "max_reward": num(p.get("maxBounty")),
             "source": "immunefi", "escrowed": True,
             "deadline": p.get("endDate"), "severity": None,
             "language": lang[0] if lang else None,
@@ -562,6 +576,19 @@ def main():
     n_err = sum(1 for s in index["sources"] if s["status"] != "ok")
     log.info("wrote %d bounties to %s (%d source(s) failed)",
              len(out), out_dir, n_err)
+
+    flagger = Path(__file__).resolve().parent.parent / "content-scan" / "flag_corpus.py"
+    try:
+        r = subprocess.run([sys.executable, str(flagger), "--file",
+                            str(out_dir / "bounties.jsonl")],
+                           capture_output=True, text=True)
+        if r.returncode:
+            log.warning("content-scan flagging failed: %s",
+                        (r.stderr or r.stdout).strip())
+        else:
+            log.info("content-scan: %s", r.stdout.strip())
+    except Exception as e:
+        log.warning("content-scan flagging failed: %s", e)
     return 0
 
 

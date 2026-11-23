@@ -34,11 +34,38 @@ flags below). Everything after `--` is a wrapper flag:
   denylist entries cover their subdomains; `*.` wildcards and CIDRs work.
 - A candidate host not covered by `## authorized_assets` → refused, exit 3.
   `wildcard-domain` assets cover subdomains; `domain` assets are exact-only.
+  Assets marked `eligible_for_bounty: false` are mapped-only: they are moved
+  to the denylist and refused like any other denied target.
 - Candidates are extracted from the tool's target flags (below), from list
   files those flags point at, from bare positional targets, and from piped
   stdin — stdin is then replayed to the child unchanged.
 - `rps_cap` under `## rate_limits` is injected as the tool's rate flag
   unless you pass `--rate` or set the flag yourself.
+
+## Scope-check coverage
+
+Extracted as candidate targets (all checked against deny + authorized):
+
+- values of known target flags, space- or `=`-joined (`-u x`, `-l=x.txt`)
+- contents of declared file flags (`-l`/`-list`/`-dL`/`-request`, trufflehog
+  positional files): every hostname/IPv4 literal in every line — bare lists,
+  URLs, and `Host:`/`Referer:` headers in raw request files all count
+- `=`-joined values on *unknown* flags (`--opt=https://evil.com`)
+- bare positional tokens that parse as host/IP/URL and do not exist on disk
+- piped stdin lines (then replayed to the child)
+
+Not extracted (deliberately, would over-match or is unknowable):
+
+- space-separated values of unknown flags that exist on disk and aren't
+  declared file flags (e.g. `ffuf -w wordlist.txt`) — but they mark the run
+  target-bearing, so under a manifest a run that yields zero candidates is
+  **refused** (exit 3) rather than warn-and-go
+- files the wrapper cannot read: refused outright (exit 3) — can't
+  scope-check what we can't read
+- denylist entries that can never match a host (`third-party:*`) — warned
+  about at manifest load, still inert for matching
+- the tool/wrapper split is the **last** `--`; a `--` inside tool args
+  cannot smuggle `--allow-unmanifested` into the wrapper
 
 ## Per-tool table
 
@@ -46,10 +73,10 @@ flags below). Everything after `--` is a wrapper flag:
 |---|---|---|---|
 | `subfinder` | `-json` | `-rl` | `-d`/`-domain`, `-dL` (file) |
 | `httpx` | `-json` | `-rl` | `-u`/`-target`, `-l`/`-list` (file), stdin |
-| `nuclei` | `-jsonl` | `-rl` | `-u`/`-target`, `-l`/`-list` (file) |
+| `nuclei` | `-jsonl` | `-rl` | `-u`/`-target`, `-l`/`-list`/`-request` (file) |
 | `katana` | `-jsonl` | `-rl` | `-u`/`-url`, `-list` (file) |
-| `ffuf` | `-json` | `-rate` | `-u` |
-| `trufflehog` | `--json` | none (`--rate` warns) | positional URLs only |
+| `ffuf` | `-json` | `-rate` | `-u`, `-request` (file) |
+| `trufflehog` | `--json` | none (`--rate` warns) | positional URLs + existing positional files (scanned) |
 | `dnsx` | `-json` | `-rl` | `-d`/`-domain`, `-l`/`-list` (file), stdin |
 
 The JSON flag is skipped when you already passed an output-format flag

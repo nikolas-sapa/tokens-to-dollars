@@ -21,7 +21,9 @@ import tempfile
 
 # Per tool: json = flag that makes it emit JSON/JSONL on stdout,
 # rate = flag enforcing a req/sec cap, tflags = target-bearing flags
-# ("host" = value is a target, "file" = value is a file of targets),
+# ("host" = value is a target, "file" = value is a file of targets or a
+# raw request carrying Host:/Referer: headers), posfile = positional args
+# that are existing files are also scanned for targets (trufflehog),
 # install = hint printed when the binary is missing.
 TOOLS = {
     "subfinder": {"json": "-json", "rate": "-rl",
@@ -31,16 +33,17 @@ TOOLS = {
               "tflags": {"-u": "host", "-target": "host", "-l": "file", "-list": "file"},
               "install": "go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest"},
     "nuclei": {"json": "-jsonl", "rate": "-rl",
-               "tflags": {"-u": "host", "-target": "host", "-l": "file", "-list": "file"},
+               "tflags": {"-u": "host", "-target": "host", "-l": "file", "-list": "file",
+                          "-request": "file"},
                "install": "go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"},
     "katana": {"json": "-jsonl", "rate": "-rl",
                "tflags": {"-u": "host", "-url": "host", "-list": "file"},
                "install": "go install github.com/projectdiscovery/katana/cmd/katana@latest"},
     "ffuf": {"json": "-json", "rate": "-rate",
-             "tflags": {"-u": "host"},
+             "tflags": {"-u": "host", "-request": "file"},
              "install": "go install github.com/ffuf/ffuf/v2@latest"},
     "trufflehog": {"json": "--json", "rate": None,
-                   "tflags": {},
+                   "tflags": {}, "posfile": True,
                    "install": "brew install trufflehog"},
     "dnsx": {"json": "-json", "rate": "-rl",
              "tflags": {"-d": "host", "-domain": "host", "-l": "file", "-list": "file"},
@@ -106,20 +109,43 @@ def parse_manifest(path):
                      or re.search(r'asset:\s*(\S+)', line)
                      or re.search(r'"([^"]+)"', line))
                 if m:
-                    auth.append(m.group(1))
+                    if re.search(r'eligible_for_bounty:\s*false', line, re.I):
+                        # mapped for context, never attacked -> denied
+                        deny.append(m.group(1))
+                    else:
+                        auth.append(m.group(1))
             elif sec == "hard_denylist" and line.startswith("- "):
                 m = re.search(r'"([^"]+)"', line)
                 if m:
-                    deny.append(m.group(1))
+                    pat = m.group(1)
                 else:
                     item = line[2:].split("#")[0].strip()
                     m = re.search(r'pattern:\s*(\S+)', item)
-                    deny.append(m.group(1) if m else item.split()[0])
+                    pat = m.group(1) if m else (item.split() or [""])[0]
+                if pat:
+                    deny.append(pat)
+                    if not matchable(pat):
+                        warn("hard_denylist pattern %r can never match a host"
+                             % pat)
             elif sec == "rate_limits":
                 m = re.match(r'rps_cap:\s*(\d+)', line)
                 if m:
                     rps = int(m.group(1))
     return {"authorized": auth, "denied": deny, "rps_cap": rps}
+
+
+def matchable(pat):
+    """Can this denylist pattern ever match a host? CIDR/network is fine;
+    otherwise only host-pattern chars count — 'third-party:*' & friends
+    (asset-class shorthands, URL patterns) can never match and are inert."""
+    p = pat.strip().strip('"').strip("'").lower()
+    if not p:
+        return False
+    try:
+        ipaddress.ip_network(p, strict=False)
+        return True
+    except ValueError:
+        return re.fullmatch(r"[a-z0-9.*_-]+", p) is not None
 
 
 def match(pat, host, subs):
@@ -147,37 +173,67 @@ def match(pat, host, subs):
 
 
 def file_hosts(path):
+    """Candidate hosts in a target-list or request file: every hostname/IP
+    literal in each line — bare lists, URLs, Host:/Referer: headers."""
     out = []
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for line in f:
-                h = host_of(line)
-                if h:
-                    out.append(h)
-    except OSError as e:
-        warn("cannot read target list %s: %s" % (path, e))
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            h = host_of(line)
+            if h:
+                out.append(h)
+            out += HOST_RE.findall(line) + IPV4_RE.findall(line)
     return out
 
 
 def extract_targets(tdef, args, stdin_text):
-    """Every host the wrapped tool is about to touch: target-flag values,
-    list files, bare positional targets, and piped stdin lines."""
+    """Every host the wrapped tool is about to touch: known target-flag
+    values (space- or =joined), the files they point at, =joined values on
+    *unknown* flags, bare positional targets, piped stdin lines.
+    Returns (candidates, saw_targetish, unreadable): saw_targetish means an
+    arg/input that should carry targets was seen, so under a manifest an
+    empty candidate list is a refusal, not a skip."""
     cands = []
+    saw_targetish = bool(stdin_text.strip())
+    unreadable = []
     i = 0
     while i < len(args):
         a = args[i]
         flag, eq, val = a.partition("=")
-        if a.startswith("-") and flag in tdef["tflags"]:
+        kind = tdef["tflags"].get(flag) if a.startswith("-") else None
+        if kind:
+            saw_targetish = True
             if not eq:
                 i += 1
                 val = args[i] if i < len(args) else ""
-            if tdef["tflags"][flag] == "file":
-                cands += file_hosts(val)
+            if kind == "file":
+                try:
+                    cands += file_hosts(val)
+                except OSError as e:
+                    unreadable.append("%s %r: %s" % (flag, val, e))
             else:
                 h = host_of(val)
                 if h:
                     cands.append(h)
-        elif not a.startswith("-") and not os.path.exists(a):
+        elif a.startswith("-"):
+            # unknown flag: only an =joined value can still smuggle a target
+            # (--opt=https://evil.com); space-separated next args land in the
+            # positional branch below on their own.
+            if eq:
+                h = host_of(val)
+                if h:
+                    cands.append(h)
+                else:
+                    cands += HOST_RE.findall(val) + IPV4_RE.findall(val)
+        elif os.path.exists(a):
+            # an existing path we were not told is a target file may still
+            # hold targets (raw requests, trufflehog file args)
+            saw_targetish = True
+            if tdef.get("posfile") and os.path.isfile(a):
+                try:
+                    cands += file_hosts(a)
+                except OSError as e:
+                    unreadable.append("%r: %s" % (a, e))
+        else:
             h = host_of(a)
             if h:
                 cands.append(h)
@@ -186,7 +242,7 @@ def extract_targets(tdef, args, stdin_text):
         h = host_of(line)
         if h:
             cands.append(h)
-    return cands
+    return cands, saw_targetish, unreadable
 
 
 def emit(tool, line, wrap_all):
@@ -198,7 +254,9 @@ def emit(tool, line, wrap_all):
 
 def main(argv):
     if "--" in argv:
-        idx = argv.index("--")
+        # the LAST -- is the tool/wrapper split: a -- inside tool args must
+        # not shift wrapper flags into argparse's reach
+        idx = len(argv) - 1 - argv[::-1].index("--")
         head, wargs = argv[:idx], argv[idx + 1:]
     else:
         head, wargs = argv, []
@@ -238,7 +296,11 @@ def main(argv):
     if not sys.stdin.isatty():
         stdin_text = sys.stdin.buffer.read().decode("utf-8", "replace")
 
-    cands = extract_targets(tdef, tool_args, stdin_text)
+    cands, saw_targetish, unreadable = extract_targets(tdef, tool_args,
+                                                       stdin_text)
+    if unreadable:
+        return die(3, "cannot scope-check unreadable target file(s): %s"
+                   % "; ".join(unreadable))
     if manifest:
         for h in cands:
             for pat in manifest["denied"]:
@@ -250,6 +312,9 @@ def main(argv):
             return die(3, "target(s) not in authorized_assets: %s"
                        % ", ".join(sorted(set(unauth))))
         if not cands:
+            if saw_targetish:
+                return die(3, "target-bearing args present but no targets "
+                           "could be extracted; refusing to run unverifiable")
             warn("no remote targets detected; scope check skipped")
     if wa.budget is not None and len(set(cands)) > wa.budget:
         return die(3, "%d distinct targets exceeds --budget %d"

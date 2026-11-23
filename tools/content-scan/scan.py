@@ -3,8 +3,8 @@
 
 Pipes fetched, attacker-influenced content (HTTP bodies, JS bundles, tool
 output, disclosed writeups) through ported signature tables before it
-reaches the planner. Emits a JSON verdict; --sanitize emits a marked-up,
-invisibles-stripped copy instead. Python 3.9+, stdlib only.
+reaches the planner. Emits a JSON verdict; --sanitize emits an
+invisibles-stripped copy with matched spans excised. Python 3.9+, stdlib only.
 
 Rules ported from:
   toolfence/src/signatures.ts           8 known-bad tool-poisoning signatures
@@ -188,9 +188,13 @@ def scan(text):
         # whitespace-collapsed fold so "ignore all\nprevious instructions"
         # and "Ig<ZWSP>nore" land as one payload.
         target = folded if r["id"] == "grip-role-prefix" else flat
-        m = r["re"].search(target) or r["re"].search(folded)
+        src = target
+        m = r["re"].search(src)
+        if m is None and src is not folded:
+            src = folded
+            m = r["re"].search(src)
         if m:
-            match, ctx = _snippet(m, target)
+            match, ctx = _snippet(m, src)
             hits.append({"rule": r["id"], "severity": r["sev"],
                          "label": r["label"], "match": match,
                          "context": ctx, "normalized": True})
@@ -206,15 +210,28 @@ def verdict(hits):
     return "clean"
 
 
+def scan_text(text):
+    """One-call helper for corpus flaggers: {"verdict", "hits"}."""
+    hits = scan(text)
+    return {"verdict": verdict(hits), "hits": hits}
+
+
 def sanitize(text):
-    """Strip invisible/format chars, then wrap each rule match in markers."""
+    """Strip invisible/format chars, then excise each rule match."""
     s = _STRIP_RE.sub("", text)
     for r in RULES:
         if r["unicode"]:
             continue
-        open_m, close_m = "[REDACTED-%s]" % r["id"], "[/REDACTED]"
-        s = r["re"].sub(lambda m: open_m + m.group(0) + close_m, s)
+        s = r["re"].sub("[removed:%s]" % r["id"], s)
     return s
+
+
+def scan_text(s):
+    """Importable API: {verdict, hits:[{rule, severity}]}."""
+    hits = scan(s)
+    return {"verdict": verdict(hits),
+            "hits": [{"rule": h["rule"], "severity": h["severity"]}
+                     for h in hits]}
 
 
 def main():
@@ -224,8 +241,8 @@ def main():
                     "exit 0=clean 1=suspicious 2=hostile.")
     ap.add_argument("--file", default=None, help="read from path instead of stdin")
     ap.add_argument("--sanitize", action="store_true",
-                    help="print sanitized copy (invisibles stripped, matches "
-                         "wrapped in [REDACTED-rule] markers) instead of JSON")
+                    help="print sanitized copy (invisibles stripped, matched "
+                         "spans excised to [removed:rule]) instead of JSON")
     args = ap.parse_args()
 
     if args.file:

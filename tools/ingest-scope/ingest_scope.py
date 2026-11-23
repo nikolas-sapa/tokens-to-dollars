@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import logging
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -191,7 +192,9 @@ def fetch_json(url, timeout):
 
 def dedupe_key(r):
     ident = (r.get("handle") or r.get("name") or "").strip().lower()
-    return (r.get("platform"), ident)
+    if not ident:
+        ident = (r.get("url") or "").strip().lower().rstrip("/")
+    return (r.get("platform"), ident or id(r))
 
 
 def merge(a, b):
@@ -274,6 +277,19 @@ def main():
     (out_dir / "index.json").write_text(json.dumps(index, indent=2) + "\n")
     n_err = sum(1 for s in index["sources"] if s["status"] != "ok")
     log.info("wrote %d programs to %s (%d source(s) failed)", len(recs), out_dir, n_err)
+
+    flagger = Path(__file__).resolve().parent.parent / "content-scan" / "flag_corpus.py"
+    try:
+        r = subprocess.run([sys.executable, str(flagger), "--file",
+                            str(out_dir / "programs.json")],
+                           capture_output=True, text=True)
+        if r.returncode:
+            log.warning("content-scan flagging failed: %s",
+                        (r.stderr or r.stdout).strip())
+        else:
+            log.info("content-scan: %s", r.stdout.strip())
+    except Exception as e:
+        log.warning("content-scan flagging failed: %s", e)
     return 0
 
 
