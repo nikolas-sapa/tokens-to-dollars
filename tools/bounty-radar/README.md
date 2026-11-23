@@ -22,6 +22,7 @@ python3 bounty_radar.py --out-dir data/radar
 | `--max-competition` | none | keep bounties with `competition_score <= N` (0-100) |
 | `--include-suspect` | off | keep scam-suspect listings (dropped by default) |
 | `--out-dir` | `./out` | output directory, created if missing |
+| `--snapshot-dir` | `memory/radar-snapshots/` (repo root) | per-program reward-table snapshots, diffed run-over-run |
 
 Every source fails soft: a dead adapter logs to stderr, is marked `error` in
 `index.json`, and the run still writes whatever the other sources returned.
@@ -44,10 +45,17 @@ funding, max 10 repos).
 ## Outputs
 
 - `bounties.jsonl` — one record per line, value-ranked:
-  `value_score = reward_usd * (1 - competition_score/100)`, ties by `age_days`
-  ascending. Read top-to-bottom.
+  `value_score = reward_usd * (1 - competition_score/100) * trend_weight`,
+  ties by `age_days` ascending. Read top-to-bottom.
 - `index.json` — `generated_at`, per-source `{source, status, n_drafts,
-  error?}`, `total_drafts`, `merged_drafts`, `total_bounties`.
+  error?}`, `total_drafts`, `merged_drafts`, `total_bounties`,
+  `snapshot_dir`, `table_changes`, `reward_trends` counts.
+- `triggers.jsonl` — one line per program whose reward table changed this
+  run (up or down only — new baselines and unchanged tables don't trigger):
+  `{"kind": "reward-table-change", "direction", "program", "url",
+  "prev": {max_reward, table_hash}, "cur": {...}, "at"}`. Feed a changed
+  program's `url` into change-detect to start watching it:
+  `python3 tools/change-detect/detect.py --target memory/targets/<slug>/change/ add <url>`
 
 ## Record schema
 
@@ -73,6 +81,7 @@ funding, max 10 repos).
   "age_days": 5,
   "deadline": null,
   "table_updated_at": "ISO date (immunefi only) or null",
+  "reward_trend": "up | down | flat | new",
   "labels": ["..."],
   "comments": 3,
   "cross_listed": true,
@@ -104,20 +113,43 @@ How contested the bounty already is — the moat metric. Signals:
 target selection: low competition x high reward = best first hit — that is
 exactly what `value_score` sorts by.
 
-## Ranking caveat — reward-table velocity
+## Reward-table snapshots — direction detection
 
-`value_score` prices reward x competition only; it does **not** see
-reward-table velocity (recent raises/cuts to a program's payout table).
 Supply is elastic: programs that cut tables draw ~22% fewer valid reports
-(~50% fewer criticals) — recently-cut programs should be deprioritized and
-recently-raised ones preferred when the direction is known.
+(~50% fewer criticals), so the radar diffs each program's reward table
+against the previous run and weights the ranking by direction.
 
-Cheap signal shipped here: `table_updated_at` carries Immunefi's
-`updatedDate` (null for GitHub sources — issue bounties have no table
-concept). A recent timestamp only means *something* on the record changed —
-verify the direction on the program page before treating it as a raise or a
-cut. No free endpoint exposes per-table diffs; a real velocity signal needs
-a snapshot diff against a previous run's `bounties.jsonl`.
+Every run, records are grouped per program (slugified `repo`, e.g.
+`alchemix-finance-v3`) and a snapshot is written to
+`<snapshot-dir>/<program-slug>.json` (default `memory/radar-snapshots/` at
+repo root — gitignored local state, same convention as change-detect's
+`memory/targets/`):
+
+```json
+{"program": "...", "url": "...", "min_reward": 100, "max_reward": 50000,
+ "tiers": [100, 1000, 50000], "table_hash": "sha256[:16] over the tier list",
+ "table_updated_at": "ISO or null", "reward_trend": "...",
+ "first_seen": "...", "last_seen": "..."}
+```
+
+The "table" is the distinct set of `amount_usd`/`max_reward` values across
+the program's records — for Immunefi that is the program max plus any merged
+issue bounties; for GitHub, the issue-level payouts. Snapshotting runs on
+deduped records before `--min-reward` filtering, so filtered-out tiers don't
+read as cuts.
+
+`reward_trend` per program: `new` (first run / unreadable prior), `down`
+(max dropped, tiers removed, or churn below an unchanged cap), `up` (max
+raised or tiers added without removals), else `flat`. `table_updated_at`
+still carries Immunefi's `updatedDate` as a "something changed" proxy, but
+the hash now gives real direction.
+
+Weighting: `value_score` is multiplied by `1.15` for `up` and `0.78` for
+`down` (the ~22% supply drop), `1.0` for `flat`/`new`. Trend lands in every
+output record and in `index.json`'s `reward_trends` counts; changed tables
+also emit trigger lines to `triggers.jsonl` consumable by change-detect.
+Caveats: a program missing from a run keeps its last snapshot (no decay), and
+GitHub issue-level tables are thin — one closed issue reads as a removed tier.
 
 ## Scam filter
 

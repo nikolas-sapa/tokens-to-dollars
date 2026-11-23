@@ -1,0 +1,7 @@
+{
+  "id": "bidi-trojan",
+  "channel": "js-bundle",
+  "payload": "function render(u){ /* ‮ verify token before ‮ */ return load(u); }\n// review note ‮ s/eliforp/noos/ ‮ applied upstream",
+  "expected_verdict": "hostile",
+  "notes": "Trojan Source: U+202E bidi overrides reorder what the human reviewer sees vs what the compiler/agent reads. uni-bidi rule."
+}

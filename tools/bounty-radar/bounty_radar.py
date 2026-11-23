@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -481,6 +482,94 @@ def to_bounty(d, repo_has_history):
     }
 
 
+# --- Reward-table snapshots --------------------------------------------------
+# Per-program reward table persisted across runs (one JSON file per program
+# under memory/radar-snapshots/). Diffing consecutive snapshots exposes table
+# direction: supply is elastic, programs that cut bounties draw ~22% fewer
+# reports (~50% fewer criticals), so "down" devalues a record and "up" boosts
+# it. TREND_WEIGHT multiplies value_score; the trend is also emitted per
+# record and changed tables produce trigger lines (triggers.jsonl) that feed
+# change-detect watches via `detect.py add <url>`.
+
+TREND_WEIGHT = {"up": 1.15, "down": 0.78, "flat": 1.0, "new": 1.0}
+DEFAULT_SNAPSHOT_DIR = (Path(__file__).resolve().parents[2]
+                        / "memory" / "radar-snapshots")
+
+
+def program_slug(repo):
+    s = re.sub(r"[^a-z0-9]+", "-", (repo or "").lower()).strip("-")
+    return s or "program-" + hashlib.sha1((repo or "?").encode()).hexdigest()[:8]
+
+
+def program_table(records):
+    tiers = sorted({v for d in records
+                    for v in (d.get("amount_usd"), d.get("max_reward"))
+                    if v is not None})
+    ups = [d["table_updated_at"] for d in records if d.get("table_updated_at")]
+    return {"min_reward": tiers[0] if tiers else None,
+            "max_reward": tiers[-1] if tiers else None,
+            "tiers": tiers,
+            "table_updated_at": max(ups) if ups else None,
+            "table_hash": hashlib.sha256(
+                json.dumps(tiers).encode()).hexdigest()[:16]}
+
+
+def trend_from(prev, cur):
+    pt, ct = set(prev.get("tiers") or []), set(cur["tiers"])
+    pmax, cmax = prev.get("max_reward"), cur["max_reward"]
+    if pt == ct and pmax == cmax:
+        return "flat"
+    if pmax is not None and (cmax is None or cmax < pmax):
+        return "down"
+    if cmax is not None and (pmax is None or cmax > pmax):
+        return "up"
+    if ct - pt and not pt - ct:
+        return "up"
+    return "down"  # tiers removed or churned below an unchanged cap
+
+
+def update_snapshots(kept, snap_dir, run_ts):
+    """Diff current reward tables against persisted snapshots; write new ones.
+
+    Runs on deduped records before --min-reward filtering so filtered-out
+    tiers don't masquerade as cuts. Returns (slug -> trend, trigger records).
+    """
+    groups = {}
+    for d in kept:
+        groups.setdefault(program_slug(d.get("repo")), []).append(d)
+    snap_dir = Path(snap_dir)
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    trends, triggers = {}, []
+    for slug, records in groups.items():
+        cur = program_table(records)
+        path = snap_dir / (slug + ".json")
+        prev = None
+        if path.is_file():
+            try:
+                prev = json.loads(path.read_text())
+            except (OSError, ValueError) as e:
+                log.warning("unreadable snapshot %s: %s -- rebasing", path, e)
+        trend = "new" if prev is None else trend_from(prev, cur)
+        trends[slug] = trend
+        url = records[0].get("url") or ""
+        snap = dict(cur)
+        snap.update({"program": slug, "url": url,
+                     "first_seen": (prev or {}).get("first_seen") or run_ts,
+                     "last_seen": run_ts, "reward_trend": trend})
+        path.write_text(json.dumps(snap, indent=2, sort_keys=True) + "\n")
+        if trend in ("up", "down"):
+            triggers.append({
+                "kind": "reward-table-change", "direction": trend,
+                "program": slug, "url": url,
+                "prev": {"max_reward": (prev or {}).get("max_reward"),
+                         "table_hash": (prev or {}).get("table_hash")},
+                "cur": {"max_reward": cur["max_reward"],
+                        "table_hash": cur["table_hash"]},
+                "at": run_ts})
+            log.info("trigger: reward-table-%s %s %s", trend, slug, url)
+    return trends, triggers
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Aggregate funded bug bounties (GitHub issues + Immunefi), "
@@ -494,6 +583,9 @@ def main():
     ap.add_argument("--include-suspect", action="store_true",
                     help="keep scam-suspect listings (dropped by default)")
     ap.add_argument("--out-dir", default="./out", help="output directory")
+    ap.add_argument("--snapshot-dir", default=str(DEFAULT_SNAPSHOT_DIR),
+                    help="reward-table snapshot dir (one <program-slug>.json "
+                         "per program, diffed against the previous run)")
     ap.add_argument("--teaser", action="store_true",
                     help="also write teaser.txt: ranked numbers with program "
                          "identity masked (shareable without leaking targets)")
@@ -529,6 +621,10 @@ def main():
 
     if not args.include_suspect:
         kept = [d for d in kept if d.get("trust", "likely_real") == "likely_real"]
+
+    trends, triggers = update_snapshots(kept, args.snapshot_dir,
+                                        index["generated_at"])
+
     if args.min_reward is not None:
         kept = [d for d in kept
                 if (d["amount_usd"] if d["amount_usd"] is not None
@@ -542,6 +638,10 @@ def main():
         history = {r: repo_bounty_history(r) for r in repos}
 
     out = [to_bounty(d, history.get(d["repo"], False)) for d in kept]
+    for b in out:
+        trend = trends.get(program_slug(b["repo"]), "new")
+        b["reward_trend"] = trend
+        b["value_score"] = round(b["value_score"] * TREND_WEIGHT[trend], 2)
     if args.max_competition is not None:
         out = [b for b in out if b["competition_score"] <= args.max_competition]
     out.sort(key=lambda b: (-b["value_score"],
@@ -551,12 +651,20 @@ def main():
         for b in out:
             f.write(json.dumps(b, ensure_ascii=False) + "\n")
 
+    with open(out_dir / "triggers.jsonl", "w") as f:
+        for t in triggers:
+            f.write(json.dumps(t, ensure_ascii=False) + "\n")
+
     index["total_bounties"] = len(out)
-    index["ranking"] = "reward_usd * (1 - competition_score/100), ties by age asc"
+    index["ranking"] = ("reward_usd * (1 - competition_score/100) "
+                        "* trend_weight(up 1.15 / down 0.78), ties by age asc")
+    index["snapshot_dir"] = str(args.snapshot_dir)
+    index["table_changes"] = len(triggers)
+    index["reward_trends"] = {t: sum(1 for b in out if b["reward_trend"] == t)
+                              for t in ("up", "down", "flat", "new")}
     (out_dir / "index.json").write_text(json.dumps(index, indent=2) + "\n")
 
     if args.teaser:
-        import hashlib
         addr = sum(b["reward_usd"] or 0 for b in out)
         esc = sum(1 for b in out if b["funding"] == "escrowed")
         lines = [

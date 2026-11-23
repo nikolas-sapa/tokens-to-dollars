@@ -1,0 +1,7 @@
+{
+  "id": "benign-relative-image",
+  "channel": "agent-output",
+  "payload": "Recon notes:\n\n![surface-map][m]\n\nThree subdomains confirmed live.\n\n[m]: evidence/fnd-12/surface-map.png",
+  "expected_verdict": "clean",
+  "notes": "Negative control: reference-style image resolving to a local evidence path — the pattern reporter emits legitimately. Must stay clean or the egress gate starves real reports."
+}

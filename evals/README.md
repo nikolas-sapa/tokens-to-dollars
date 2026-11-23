@@ -1,8 +1,9 @@
 # evals — the scoreboard layer
 
-Claims without a scoreboard are marketing. This directory holds the two
+Claims without a scoreboard are marketing. This directory holds the
 harnesses that turn the repo's premise — convert tokens to dollars — into
-numbers anyone can check. One measures dollars, the other measures honesty.
+numbers anyone can check. One measures dollars, one measures honesty, one
+measures survival.
 
 ## bountybench/ — dollars
 
@@ -24,10 +25,21 @@ matrix — submit-worthy rate, not find rate — and it gates CI for playbook
 changes. The ARE-MCP reference point (105 "CONFIRMED" → $0; v2 with
 deterministic filtering → ~$1,100 paid) is the bar it exists to beat.
 
+## injection/ — survival
+
+`run.py` is an AgentDojo-style prompt-injection harness: hostile fixtures
+(fetched pages, tool descriptions, egress markdown) piped through
+`tools/content-scan/scan.py`, scored on attack-success rate, verdict
+accuracy, and a utility proxy on benign controls. It answers "does the
+fleet stay on-task when the content fights back" — and it decays: re-run
+on every model, scanner, or prompt change.
+
 ## Philosophy
 
-The two harnesses deliberately measure different things. BountyBench can be
+The harnesses deliberately measure different things. BountyBench can be
 gamed by memorized exploits; FP-rate can look great on a fleet that finds
-nothing. You need both: one keeps the economics honest, the other keeps the
-findings honest. Report both numbers, including the ugly ones — the ledger
-and the scoreboard are as much the product as the findings.
+nothing; injection fixtures can all pass on a fleet that gets hijacked by
+the first novel payload. You need all three: one keeps the economics
+honest, one keeps the findings honest, one keeps the gate honest. Report
+all the numbers, including the ugly ones — the ledger and the scoreboard
+are as much the product as the findings.

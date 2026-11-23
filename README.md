@@ -62,6 +62,7 @@ separately — see `docs/mcp-integrations.md`.
 |---|---|
 | `bountybench` | Stanford's dollar-mapped benchmark: 40 real bounties, $10–$30,485 — the canonical "tokens→dollars" scoreboard |
 | `fprate` | False-positive rate under our gates. Baseline to beat: an agent that flagged 105 "CONFIRMED" vulns earned $0; gated + adversarially reviewed it earned $1,100 |
+| `injection` | Prompt-injection survival: hostile fixtures through `tools/content-scan` — attack-success rate, verdict accuracy, utility. Re-run per model/scanner change |
 
 ## Quickstart
 

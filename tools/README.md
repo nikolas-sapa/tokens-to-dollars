@@ -31,10 +31,19 @@ sayan011's Immunefi writeups list, a bounded slice of trickest/cve writeups
 index rows, per-class aggregate counts from nuclei-templates (one
 `nuclei:<class>` record per top-level dir), n132/ARVO's OSS-Fuzz
 `metadata.jsonl` index (soft-skips if it ever exceeds 50 MB), and
-reddelexc/hackerone-reports' `data.csv` of disclosed H1 reports. `--list`
-prints the source names. Output is `records.jsonl` — one
+reddelexc/hackerone-reports' `data.csv` of disclosed H1 reports. Four newer
+adapters widen the corpus: `huntr` parses huntr.com's public disclosures
+(falling back to the legacy 418sec/huntr repo when the JS page yields
+nothing), `solodit` pages the Cyfrin findings API (`SOLODIT_API_KEY`,
+~100 req/min upstream limit), `primevul` emits one index record per CVE from
+bounded datasets-server row windows (the full shards run ~500 MB+), and
+`patchdb` reads a local CVEfixes/MoreFixes sqlite via `--db` and emits one
+record per vuln+patch method pair — the func bodies feed
+verify_claims/patch-diff work. `--list` prints the source names. Output is
+`records.jsonl` — one
 `{source, title, program, weakness, severity, bounty_usd, url, date}` row per
-report, best-effort mapped — plus `knowledge-index.json` with per-source
+report, best-effort mapped (adapters may add keys like `firm`, `status`,
+`vulnerable_func`) — plus `knowledge-index.json` with per-source
 counts. Content is author-owned: mirror internally, never redistribute.
 
 ## bounty-radar
@@ -117,6 +126,23 @@ secret shapes (Anthropic `sk-ant`, generic `sk-`, GitHub `ghp_`/`gho_`,
 JWTs, AWS `AKIA`, PEM private-key blocks, generic Bearer) are replaced
 with `[redacted]` *before* any `--max-bytes` truncation, so a token
 straddling the cap can't be half-stored. See `skills/evidence`.
+
+## guardian
+
+`guardian/guardian.py` is the second enforcement layer behind `wrap/`:
+an independent action-level adjudicator (the XBOW Guardian-model
+concept, code-enforced). Where wrap checks the *string* of a command,
+guardian takes a structured action object (`{type: http|shell, method,
+url, headers, body | argv}`) and returns `allow` / `escalate` / `deny`
+(exit 0/2/3) — blind by design, so the agent's stated justification is
+never an input. Scope matching delegates to `wrap.py` (one authority);
+deny rules cover exfil-shaped headers to non-authorized hosts,
+secret-shaped material, denylist, out-of-scope, destructive shell;
+escalate covers ambiguous scope, manifest `forbidden_actions`, and
+mutating verbs over rate — the deny-porosity rule, nothing unprovable
+is silently allowed. Fail-closed everywhere. See
+`tools/guardian/README.md` for the integration point (pre-wrap or
+inside `mcp-server.py run_tool`).
 
 ## fact-verify
 

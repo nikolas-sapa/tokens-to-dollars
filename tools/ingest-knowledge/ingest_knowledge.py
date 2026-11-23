@@ -4,9 +4,12 @@ import csv
 import io
 import json
 import logging
+import os
 import re
+import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -42,6 +45,40 @@ ARVO_MAX_BYTES = 50 * 1024 * 1024  # skip rather than pull a multi-GB arvo.db
 # H1 hacktivity; the repo carries no explicit redistribution license, so treat it
 # like the other corpora: author-owned, mirror internally, never republish.
 H1REPORTS = "https://raw.githubusercontent.com/reddelexc/hackerone-reports/master/data.csv"
+
+HUNTR_PAGE = "https://huntr.com/bounties"
+HUNTR_BOUNTY = "https://huntr.com/bounties/%s"
+# pre-Protect-AI huntr disclosures live as per-bounty vulnerability.json files
+# in the legacy 418sec/huntr repo; used as fallback when huntr.com markup yields
+# no records (site is JS-rendered and its embedded data shape changes often)
+HUNTR_418_TREE = "https://api.github.com/repos/418sec/huntr/git/trees/master?recursive=1"
+HUNTR_418_RAW = "https://raw.githubusercontent.com/418sec/huntr/master/%s"
+HUNTR_MAX_FILES = 250  # bounded subset of legacy vulnerability.json payloads
+
+# Cyfrin Solodit findings API: single POST /findings endpoint, key header
+# X-Cyfrin-API-Key, rate limits ~100 req/min and ~10k req/day per docs.
+SOLODIT_API = "https://solodit.cyfrin.io/api/v1/solodit/findings"
+SOLODIT_PAGE_SIZE = 50
+SOLODIT_MAX_RECORDS = 500
+SOLODIT_PAGE_DELAY = 0.7  # seconds between pages; keeps us well under 100 req/min
+SOLODIT_KEY_ENV = "SOLODIT_API_KEY"
+
+# PrimeVul full jsonl shards run ~500MB+; fetch bounded row windows through the
+# HF datasets-server instead and emit one index record per CVE. If the rows API
+# is unavailable, fall back to a shard-level index of a github assets mirror.
+PRIMEVUL_ROWS = ("https://datasets-server.huggingface.co/rows"
+                 "?dataset=%s&config=%s&split=%s&offset=%d&length=%d")
+PRIMEVUL_DATASETS = ["DLVulDet/PrimeVul", "colin/PrimeVul"]
+PRIMEVUL_SPLITS = [("default", "test"), ("default", "validation"), ("default", "train")]
+PRIMEVUL_PAGE = 100
+PRIMEVUL_MAX_ROWS = 2000
+PRIMEVUL_TREE = ("https://api.github.com/repos/timothee-chauvin/"
+                 "PrimeVul-assets-on-github/git/trees/main?recursive=1")
+PRIMEVUL_BLOB = ("https://github.com/timothee-chauvin/"
+                 "PrimeVul-assets-on-github/blob/main/%s")
+
+PATCHDB_PATH = None   # --db; local CVEfixes/MoreFixes sqlite file
+PATCHDB_MAX_RECORDS = 5000
 
 
 def fetch(url, timeout):
@@ -97,10 +134,21 @@ def parse_usd(s):
 
 
 def rec(source, title=None, program=None, weakness=None, severity=None,
-        bounty_usd=None, url=None, date=None):
-    return {"source": source, "title": clean(title), "program": clean(program),
-            "weakness": clean(weakness), "severity": clean(severity),
-            "bounty_usd": bounty_usd, "url": clean(url), "date": clean(date)}
+        bounty_usd=None, url=None, date=None, extra=None):
+    r = {"source": source, "title": clean(title), "program": clean(program),
+         "weakness": clean(weakness), "severity": clean(severity),
+         "bounty_usd": bounty_usd, "url": clean(url), "date": clean(date)}
+    if extra:
+        r.update({k: v for k, v in extra.items() if v is not None})
+    return r
+
+
+def first(d, *keys):
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, ""):
+            return v
+    return None
 
 
 def bugskill_url(timeout):
@@ -371,6 +419,419 @@ def source_h1reports(timeout):
     return H1REPORTS, norm_h1reports(fetch(H1REPORTS, timeout).decode("utf-8", "replace"))
 
 
+NEXT_DATA = re.compile(
+    r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', re.S)
+
+
+def deep_find_bounties(node):
+    """Yield dicts that look like huntr vuln entries inside arbitrary JSON."""
+    if isinstance(node, dict):
+        keys = set(node)
+        if ("title" in keys or "vulnerability_title" in keys) and (
+                keys & {"slug", "bounty_id", "vulnerability_id", "cwe", "status"}):
+            yield node
+        for v in node.values():
+            yield from deep_find_bounties(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from deep_find_bounties(v)
+
+
+def norm_huntr_item(d):
+    slug = first(d, "slug", "bounty_id", "vulnerability_id", "id")
+    cwe = first(d, "cwe", "weakness", "vulnerability_type")
+    if isinstance(cwe, list):
+        cwe = ", ".join(str(c) for c in cwe)
+    elif isinstance(cwe, dict):
+        cwe = first(cwe, "id", "name", "title")
+    repo = first(d, "repository", "repo", "package", "project")
+    if isinstance(repo, dict):
+        repo = first(repo, "name", "url", "full_name")
+    url = d.get("url")
+    if not url and slug:
+        url = HUNTR_BOUNTY % slug
+    return rec("huntr",
+               title=first(d, "title", "vulnerability_title", "name"),
+               program=repo,
+               weakness=cwe,
+               severity=first(d, "severity", "cvss_severity", "impact"),
+               url=url,
+               date=first(d, "disclosed_at", "disclosure_date", "published_at",
+                          "created_at"),
+               extra={"status": first(d, "status", "state"),
+                      "repo": repo})
+
+
+def norm_huntr_nextdata(html):
+    m = NEXT_DATA.search(html)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except ValueError:
+        return []
+    seen, out = set(), []
+    for d in deep_find_bounties(data):
+        key = json.dumps(d, sort_keys=True)[:400]
+        if key in seen:
+            continue
+        seen.add(key)
+        r = norm_huntr_item(d)
+        if r["title"]:
+            out.append(r)
+    return out
+
+
+def norm_huntr_418(d):
+    """Legacy 418sec/huntr vulnerability.json entry."""
+    def flat(dd):
+        out = {}
+        for k, v in (dd or {}).items():
+            if isinstance(v, dict):
+                out.update(v)
+            else:
+                out[k] = v
+        return out
+    d = flat(d)
+    vuln = first(d, "Vulnerability", "vulnerability")
+    if isinstance(vuln, dict):
+        d = {**flat(vuln), **d}
+    pkg = first(d, "PackageName", "package_name", "Name", "package")
+    reg = first(d, "PackageRegistry", "package_registry", "Registry")
+    repo = "%s/%s" % (reg, pkg) if reg and pkg else pkg
+    cve = first(d, "CVE", "cve", "CVEID", "cve_id")
+    if isinstance(cve, list):
+        cve = ", ".join(cve)
+    slug = first(d, "ID", "id", "BountyID")
+    return rec("huntr",
+               title=first(d, "Title", "title", "Summary") or cve,
+               program=repo,
+               weakness=first(d, "CWE", "cwe", "CWEs"),
+               url="https://huntr.com/bounties/%s" % slug if slug else None,
+               date=first(d, "DisclosureDate", "disclosed", "PublishDate",
+                          "Created"),
+               extra={"cve": cve, "repo": repo,
+                      "status": first(d, "Status", "status")})
+
+
+def source_huntr(timeout):
+    try:
+        html = fetch(HUNTR_PAGE, timeout).decode("utf-8", "replace")
+        out = norm_huntr_nextdata(html)
+        if out:
+            return HUNTR_PAGE, out
+        log.warning("huntr.com page yielded no __NEXT_DATA__ records; "
+                    "falling back to 418sec/huntr mirror")
+    except Exception as e:
+        log.warning("huntr.com fetch failed (%s); falling back to 418sec/huntr", e)
+    tree = fetch_json(HUNTR_418_TREE, timeout)
+    paths = sorted(t["path"] for t in tree.get("tree", [])
+                   if t.get("type") == "blob"
+                   and t["path"].endswith("vulnerability.json"))
+    picked = paths[:HUNTR_MAX_FILES]
+    if not picked:
+        raise RuntimeError("no vulnerability.json files in 418sec/huntr tree")
+    out = []
+    for p in picked:
+        try:
+            d = fetch_json(HUNTR_418_RAW % p, timeout)
+            out.append(norm_huntr_418(d))
+        except Exception as e:
+            log.warning("huntr legacy %s failed: %s", p, e)
+    return HUNTR_418_TREE, out
+
+
+def solodit_post(body, api_key, timeout):
+    req = Request(SOLODIT_API, data=json.dumps(body).encode(),
+                  headers={"User-Agent": UA, "Content-Type": "application/json",
+                           "X-Cyfrin-API-Key": api_key},
+                  method="POST")
+    with urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def solodit_findings(data):
+    """Pull the findings list out of a response whose envelope may vary."""
+    if isinstance(data, list):
+        return data, None
+    if not isinstance(data, dict):
+        return [], None
+    total = first(data, "total", "total_count", "count")
+    meta = data.get("metadata") or data.get("meta")
+    if total is None and isinstance(meta, dict):
+        total = first(meta, "total", "totalCount", "count")
+    for k in ("findings", "data", "results", "items", "vulnerabilities"):
+        v = data.get(k)
+        if isinstance(v, list):
+            return v, total
+        if isinstance(v, dict):
+            for k2 in ("findings", "results", "items"):
+                if isinstance(v.get(k2), list):
+                    return v[k2], total or first(v, "total", "totalCount")
+    return [], total
+
+
+def norm_solodit(d):
+    firm = first(d, "firm", "audit_firm", "auditor", "company")
+    if isinstance(firm, dict):
+        firm = first(firm, "name", "label", "value")
+    if isinstance(firm, list):
+        firm = ", ".join(str(f) for f in firm)
+    proto = first(d, "protocol", "protocol_name", "project", "contest")
+    if isinstance(proto, dict):
+        proto = first(proto, "name", "title", "value")
+    url = first(d, "url", "link", "report_link", "pdf_link")
+    fid = first(d, "id", "slug")
+    if not url and fid:
+        url = "https://solodit.cyfrin.io/issues/%s" % fid
+    return rec("solodit",
+               title=first(d, "title", "finding_title", "name", "issue_title"),
+               program=proto,
+               weakness=first(d, "category", "vulnerability_type", "finding_type",
+                              "issue_type"),
+               severity=first(d, "impact", "severity", "risk"),
+               url=url,
+               date=first(d, "date", "report_date", "published_at", "created_at"),
+               extra={"firm": firm})
+
+
+def source_solodit(timeout):
+    api_key = os.environ.get(SOLODIT_KEY_ENV)
+    if not api_key:
+        raise RuntimeError("%s not set; get a key at solodit.cyfrin.io "
+                           "(profile -> API Keys)" % SOLODIT_KEY_ENV)
+    out, seen, page = [], set(), 1
+    while len(out) < SOLODIT_MAX_RECORDS:
+        body = {"page": page, "pageSize": SOLODIT_PAGE_SIZE,
+                "filters": {"sortField": "Quality", "sortDirection": "Desc"}}
+        findings, total = solodit_findings(solodit_post(body, api_key, timeout))
+        if not findings:
+            break
+        for d in findings:
+            if not isinstance(d, dict):
+                continue
+            r = norm_solodit(d)
+            key = r["url"] or r["title"]
+            if key and key not in seen:
+                seen.add(key)
+                out.append(r)
+        if total and page * SOLODIT_PAGE_SIZE >= int(total):
+            break
+        page += 1
+        time.sleep(SOLODIT_PAGE_DELAY)
+    return SOLODIT_API, out[:SOLODIT_MAX_RECORDS]
+
+
+CVE_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.I)
+
+
+def primevul_cve(row):
+    cve = first(row, "cve", "cve_id", "CVE")
+    if cve and CVE_RE.search(str(cve)):
+        return CVE_RE.search(str(cve)).group(0).upper()
+    return None
+
+
+def norm_primevul_index(cve, rows):
+    cwes, projects, commits = set(), set(), set()
+    vuln_func = patch_func = None
+    for r in rows:
+        c = first(r, "cwe", "cwe_id", "CWE")
+        if isinstance(c, list):
+            cwes.update(str(x) for x in c)
+        elif c:
+            cwes.add(str(c))
+        p = first(r, "project", "repo", "repository")
+        if p:
+            projects.add(str(p))
+        cm = first(r, "commit", "commit_id", "fix_commit", "hash")
+        if cm:
+            commits.add(str(cm))
+        v = first(r, "vulnerable_func", "func_before", "vul_func", "func_vul")
+        f = first(r, "patched_func", "func_after", "fix_func", "func_fixed")
+        if v and f and not (vuln_func and patch_func):
+            vuln_func, patch_func = v, f
+        elif r.get("target") in (1, "1", True) and not vuln_func:
+            vuln_func = first(r, "func", "function", "code")
+    proj = sorted(projects)
+    return rec("primevul",
+               title="%s (%d sample%s)" % (cve, len(rows),
+                                           "" if len(rows) == 1 else "s"),
+               program=", ".join(proj[:3]),
+               weakness=", ".join(sorted(cwes)) or None,
+               url="https://nvd.nist.gov/vuln/detail/%s" % cve,
+               extra={"cve": cve, "commits": sorted(commits)[:5],
+                      "n_samples": len(rows),
+                      "vulnerable_func": vuln_func,
+                      "patched_func": patch_func})
+
+
+def source_primevul(timeout):
+    by_cve = {}
+    rows_left = PRIMEVUL_MAX_ROWS
+    for ds in PRIMEVUL_DATASETS:
+        for config, split in PRIMEVUL_SPLITS:
+            offset = 0
+            while rows_left > 0:
+                n = min(PRIMEVUL_PAGE, rows_left)
+                url = PRIMEVUL_ROWS % (ds, config, split, offset, n)
+                try:
+                    data = fetch_json(url, timeout)
+                except Exception as e:
+                    log.warning("primevul rows %s/%s@%d failed: %s",
+                                ds, split, offset, e)
+                    break
+                rows = [r.get("row", r) for r in data.get("rows", [])]
+                if not rows:
+                    break
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    cve = primevul_cve(row)
+                    if cve:
+                        by_cve.setdefault(cve, []).append(row)
+                got = len(rows)
+                rows_left -= got
+                if got < n:
+                    break
+                offset += got
+        if by_cve:
+            break  # first dataset that yields rows wins
+    if not by_cve:
+        log.warning("primevul rows API yielded nothing; "
+                    "falling back to shard-level index")
+        tree = fetch_json(PRIMEVUL_TREE, timeout)
+        out = [rec("primevul",
+                   title="primevul shard %s" % t["path"],
+                   weakness="C/C++ vuln+patch pairs",
+                   url=PRIMEVUL_BLOB % t["path"],
+                   extra={"bytes": t.get("size")})
+               for t in tree.get("tree", [])
+               if t.get("type") == "blob" and t["path"].endswith(".jsonl")]
+        if out:
+            return PRIMEVUL_TREE, out
+        raise RuntimeError("primevul: rows API and github index both empty")
+    out = [norm_primevul_index(cve, rows)
+           for cve, rows in sorted(by_cve.items())]
+    return PRIMEVUL_ROWS % ("|".join(PRIMEVUL_DATASETS), "default", "*", 0, 0), out
+
+
+# Expected sqlite schema (CVEfixes / MoreFixes layout; column names probed,
+# alternate names listed first win):
+#   cve(cve_id, published?/published_date?/date?)
+#   fixes(fix_id, cve_id, hash, repo_url)
+#   file_change(file_change_id, fix_id, filename)
+#   method_change(method_change_id, file_change_id, name, before_change, code)
+# before_change is 'True'/'False' text in CVEfixes; '1'/'0' tolerated.
+
+def db_columns(conn, table):
+    return {r[1] for r in conn.execute("PRAGMA table_info(%s)" % table)}
+
+
+def pick_col(cols, *names):
+    for n in names:
+        if n in cols:
+            return n
+    return None
+
+
+def source_patchdb(timeout):
+    if not PATCHDB_PATH:
+        raise RuntimeError("patchdb requires --db PATH "
+                           "(local CVEfixes/MoreFixes sqlite file)")
+    if not Path(PATCHDB_PATH).is_file():
+        raise FileNotFoundError("patchdb sqlite file not found: %s" % PATCHDB_PATH)
+    conn = sqlite3.connect("file:%s?mode=ro" % PATCHDB_PATH, uri=True)
+    try:
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        required = {"cve", "fixes", "file_change", "method_change"}
+        missing = required - tables
+        if missing:
+            raise RuntimeError(
+                "patchdb schema mismatch: missing table(s) %s in %s "
+                "(expected CVEfixes/MoreFixes layout: cve, fixes, "
+                "file_change, method_change; found: %s)"
+                % (", ".join(sorted(missing)), PATCHDB_PATH,
+                   ", ".join(sorted(tables))))
+        fc, mc = db_columns(conn, "fixes"), db_columns(conn, "file_change")
+        me, cv = db_columns(conn, "method_change"), db_columns(conn, "cve")
+        f_id = pick_col(fc, "fix_id", "id")
+        f_cve = pick_col(fc, "cve_id", "cve")
+        f_hash = pick_col(fc, "hash", "commit", "commit_hash")
+        f_repo = pick_col(fc, "repo_url", "repository", "repo")
+        ch_id = pick_col(mc, "file_change_id", "id")
+        ch_fix = pick_col(mc, "fix_id", "commit_hash", "hash")
+        ch_file = pick_col(mc, "filename", "file", "path")
+        m_id = pick_col(me, "method_change_id", "id")
+        m_file = pick_col(me, "file_change_id", "file_id")
+        m_name = pick_col(me, "name", "method_name", "signature")
+        m_before = pick_col(me, "before_change", "before", "is_before")
+        m_code = pick_col(me, "code", "method_code", "body", "source")
+        c_id = pick_col(cv, "cve_id", "id", "cve")
+        c_date = pick_col(cv, "published", "published_date", "date")
+        missing_cols = [n for n, c in
+                        (("fixes.fix_id", f_id), ("fixes.cve_id", f_cve),
+                         ("file_change.file_change_id", ch_id),
+                         ("file_change.fix_id", ch_fix),
+                         ("method_change.file_change_id", m_file),
+                         ("method_change.before_change", m_before),
+                         ("method_change.code", m_code))
+                        if c is None]
+        if missing_cols:
+            raise RuntimeError("patchdb schema mismatch: missing column(s) %s"
+                               % ", ".join(missing_cols))
+        q = ("SELECT f.%s, f.%s, f.%s, f.%s, ch.%s, m.%s, m.%s, m.%s, m.%s, "
+             "cv.%s FROM fixes f "
+             "JOIN file_change ch ON ch.%s = f.%s "
+             "JOIN method_change m ON m.%s = ch.%s "
+             "LEFT JOIN cve cv ON cv.%s = f.%s"
+             % (f_cve, f_hash or "NULL", f_repo or "NULL", f_id,
+                ch_file or "NULL", m_name or "NULL", m_before or "NULL",
+                m_code, m_id,
+                c_date or "NULL",
+                ch_fix, f_id, m_file, ch_id,
+                c_id or "NULL", f_cve))
+        q = q.replace("f.NULL", "NULL").replace("ch.NULL", "NULL")
+        q = q.replace("m.NULL", "NULL").replace("cv.NULL", "NULL")
+        pairs = {}
+        for (cve_id, commit, repo, _fix, fname, mname, before, code,
+             _mid, cve_date) in conn.execute(q):
+            key = (cve_id, commit, fname, mname)
+            d = pairs.setdefault(key, {"repo": repo, "date": cve_date})
+            if str(before).lower() in ("true", "1", "yes"):
+                d["vuln"] = code
+            elif str(before).lower() in ("false", "0", "no"):
+                d["patch"] = code
+            if len(pairs) > PATCHDB_MAX_RECORDS * 3:
+                break
+        if not pairs:
+            raise RuntimeError("patchdb query returned 0 method rows in %s"
+                               % PATCHDB_PATH)
+        out = []
+        for (cve_id, commit, fname, mname), d in sorted(pairs.items()):
+            if not (d.get("vuln") and d.get("patch")):
+                continue  # only emit complete vuln+patch pairs
+            url = None
+            if repo and commit and "github.com" in str(repo):
+                url = "%s/commit/%s" % (str(repo).rstrip("/"), commit)
+            out.append(rec("patchdb",
+                           title="%s %s" % (cve_id, mname or fname or "?"),
+                           program=d["repo"],
+                           weakness=cve_id,
+                           url=url,
+                           date=d["date"],
+                           extra={"cve": cve_id, "commit": commit,
+                                  "file": fname, "method": mname,
+                                  "vulnerable_func": d["vuln"],
+                                  "patched_func": d["patch"]}))
+            if len(out) >= PATCHDB_MAX_RECORDS:
+                break
+        return "file://%s" % PATCHDB_PATH, out
+    finally:
+        conn.close()
+
+
 SOURCES = [
     ("bugskill-ai", source_bugskill),
     ("ajaysenr-h1", source_ajaysenr),
@@ -381,11 +842,16 @@ SOURCES = [
     ("nuclei-templates", source_nuclei),
     ("arvo", source_arvo),
     ("reddelexc-h1", source_h1reports),
+    ("huntr", source_huntr),
+    ("solodit", source_solodit),
+    ("primevul", source_primevul),
+    ("patchdb", source_patchdb),
 ]
 
 
 def main():
-    global TRICKEST_MAX_FILES
+    global TRICKEST_MAX_FILES, HUNTR_MAX_FILES, SOLODIT_MAX_RECORDS
+    global PRIMEVUL_MAX_ROWS, PATCHDB_PATH, PATCHDB_MAX_RECORDS
     names = ", ".join(n for n, _ in SOURCES)
     ap = argparse.ArgumentParser(description="Ingest disclosed-bug/writeup corpora for RAG and few-shot priming.")
     ap.add_argument("--out-dir", default="./out", help="output directory (default ./out)")
@@ -394,6 +860,21 @@ def main():
     ap.add_argument("--list", action="store_true", help="list source names and exit")
     ap.add_argument("--trickest-cap", type=int, default=TRICKEST_MAX_FILES,
                     help="max trickest/cve writeup records (default %d)" % TRICKEST_MAX_FILES)
+    ap.add_argument("--huntr-cap", type=int, default=HUNTR_MAX_FILES,
+                    help="max legacy huntr vulnerability.json fetches when the "
+                         "418sec/huntr fallback is used (default %d)" % HUNTR_MAX_FILES)
+    ap.add_argument("--solodit-cap", type=int, default=SOLODIT_MAX_RECORDS,
+                    help="max solodit findings fetched via paged API "
+                         "(default %d)" % SOLODIT_MAX_RECORDS)
+    ap.add_argument("--primevul-cap", type=int, default=PRIMEVUL_MAX_ROWS,
+                    help="max primevul dataset rows scanned for CVE index "
+                         "records (default %d)" % PRIMEVUL_MAX_ROWS)
+    ap.add_argument("--db", default=None,
+                    help="local CVEfixes/MoreFixes sqlite path for the patchdb "
+                         "source")
+    ap.add_argument("--db-cap", type=int, default=PATCHDB_MAX_RECORDS,
+                    help="max patchdb vuln+patch pairs emitted "
+                         "(default %d)" % PATCHDB_MAX_RECORDS)
     ap.add_argument("--timeout", type=float, default=30, help="per-fetch timeout seconds (default 30)")
     args = ap.parse_args()
 
@@ -403,6 +884,11 @@ def main():
         return 0
 
     TRICKEST_MAX_FILES = args.trickest_cap
+    HUNTR_MAX_FILES = args.huntr_cap
+    SOLODIT_MAX_RECORDS = args.solodit_cap
+    PRIMEVUL_MAX_ROWS = args.primevul_cap
+    PATCHDB_PATH = args.db
+    PATCHDB_MAX_RECORDS = args.db_cap
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
     want = {s.strip() for s in args.sources.split(",")} if args.sources else None
