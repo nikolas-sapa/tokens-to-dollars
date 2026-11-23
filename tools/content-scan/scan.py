@@ -4,7 +4,10 @@
 Pipes fetched, attacker-influenced content (HTTP bodies, JS bundles, tool
 output, disclosed writeups) through ported signature tables before it
 reaches the planner. Emits a JSON verdict; --sanitize emits an
-invisibles-stripped copy with matched spans excised. Python 3.9+, stdlib only.
+invisibles-stripped copy with matched spans excised. --egress flips
+direction: the same pass runs on OUTBOUND agent-generated content plus
+exfil-channel rules (remote images/auto-fetch links, blob-carrying URLs).
+Python 3.9+, stdlib only.
 
 Rules ported from:
   toolfence/src/signatures.ts           8 known-bad tool-poisoning signatures
@@ -18,6 +21,7 @@ import re
 import sys
 import unicodedata
 from pathlib import Path
+from urllib.parse import urlparse
 
 _CTX = 40          # context chars each side of a match
 _MAX_MATCH = 120   # truncated match length
@@ -159,6 +163,21 @@ RULES = [
 ]
 _SEV_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
+# ── Egress rules (--egress) ──────────────────────────────────────────────
+# Outbound-only checks on generated content. Remote markdown images and
+# HTML auto-fetch tags are the EchoLeak channel: the renderer fetches the
+# URL, shipping whatever data the URL carries. Hosts in
+# EGRESS_HOST_ALLOWLIST are exempt; everything else external flags.
+EGRESS_HOST_ALLOWLIST = frozenset()
+_EG_IMG_URL = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^)\s]+)")
+_EG_IMG_REF = re.compile(r"!\[[^\]]*\]\[([^\]\s]+)\]")
+_EG_REF_DEF = re.compile(r"^\s{0,3}\[([^\]]+)\]:[ \t]*(\S+)", re.M)
+_EG_AUTOFETCH = re.compile(
+    r"<(?:img|iframe|script|source|video|audio|link)\b[^>]{0,300}?"
+    r"(?:src|href)\s*=\s*[\"']?\s*(https?://[^\s\"'>]+)", re.I)
+_EG_URL_BLOB = re.compile(
+    r"https?://[^\s)\]\"'<>]*[A-Za-z0-9+/=_-]{80,}")
+
 
 def _fold(text):
     """NFKC + strip invisibles + confusable→Latin (what a reader actually sees)."""
@@ -222,6 +241,47 @@ def scan_text(text):
     return {"verdict": verdict(hits), "hits": hits}
 
 
+def _allowlisted(url):
+    try:
+        h = urlparse(url).hostname
+    except ValueError:
+        return False
+    return bool(h) and h.lower() in EGRESS_HOST_ALLOWLIST
+
+
+def egress_scan(text):
+    """Outbound-only checks layered on scan(): remote images/auto-fetch
+    tags (EchoLeak) and blob-carrying URLs in generated output."""
+    hits = []
+    refdefs = {m.group(1).lower(): m.group(2)
+               for m in _EG_REF_DEF.finditer(text)}
+    checks = (
+        (_EG_IMG_URL, "egress-external-image", "high",
+         "markdown image fetching a remote URL (EchoLeak exfil channel)",
+         lambda m: m.group(1)),
+        (_EG_IMG_REF, "egress-external-image-ref", "high",
+         "reference-style markdown image, off-allowlist or unresolved",
+         lambda m: refdefs.get(m.group(1).lower())),
+        (_EG_AUTOFETCH, "egress-autofetch-tag", "high",
+         "HTML auto-fetch tag loading a remote URL", lambda m: m.group(1)),
+        (_EG_URL_BLOB, "egress-url-blob", "high",
+         "long base64/hex blob inside URL (data smuggling)",
+         lambda m: None),
+    )
+    for rx, rule, sev, label, geturl in checks:
+        for m in rx.finditer(text):
+            url = geturl(m)
+            if url and not url.lower().startswith(("http://", "https://")):
+                continue  # relative/internal target — no exfil channel
+            if url and _allowlisted(url):
+                continue
+            match, ctx = _snippet(m, text)
+            hits.append({"rule": rule, "severity": sev, "label": label,
+                         "match": match, "context": ctx,
+                         "normalized": False})
+    return hits
+
+
 def sanitize(text):
     """Strip invisible/format chars, then excise each rule match."""
     s = _STRIP_RE.sub("", text)
@@ -249,6 +309,10 @@ def main():
     ap.add_argument("--sanitize", action="store_true",
                     help="print sanitized copy (invisibles stripped, matched "
                          "spans excised to [removed:rule]) instead of JSON")
+    ap.add_argument("--egress", action="store_true",
+                    help="scan OUTBOUND content (agent-generated markdown, "
+                         "URLs): full pass plus remote-image/auto-fetch/"
+                         "blob-URL exfil rules")
     args = ap.parse_args()
 
     if args.file:
@@ -257,6 +321,8 @@ def main():
         text = sys.stdin.buffer.read().decode("utf-8", "replace")
 
     hits = scan(text)
+    if args.egress:
+        hits += egress_scan(text)
     v = verdict(hits)
     if args.sanitize:
         out = sanitize(text)

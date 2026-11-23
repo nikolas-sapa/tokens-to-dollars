@@ -138,6 +138,41 @@ by `tools/ledger` or any script over the tables:
 - **Breakeven dashboard** — cumulative token $ vs cumulative payout $ over
   time, plus spend-remaining-vs-ceiling per program.
 
+## EV model + cost-tier routing
+
+Realized EV (Σ payout / Σ est-$) grades the past. Target selection needs
+predicted EV, scored per candidate target before dispatch:
+
+`EV = p_find × prec_val × (1 − r_dup) × (1 − r_info) × B_ref − (C_scan + p_find × C_HITL)`
+
+- `p_find` — P(the technique yields a reportable vuln on this target).
+- `prec_val` — validator precision on candidates; require ≥ 0.95 from
+  deterministic validators (replay, invariant tests) — below that the
+  pipeline burns HITL review on noise.
+- `r_dup` — P(duplicate); rises with program age and hunter density
+  (bounty-radar `competition_score` is the usable proxy).
+- `r_info` — P(closes N/A: informative, out-of-scope, intended behavior).
+- `B_ref` — reference payout for the vuln class × severity (priors below).
+- `C_scan` — token cost of the scan pass. `C_HITL` — human validation cost,
+  paid only on confirmed candidates, hence `p_find × C_HITL` — never always.
+
+Model-cost routing frontier (XBOW fall-2026 data): ~$0.10/task micro/RL
+models for breadth screening; ~$1/task open-weight fast models for standard
+vuln classes; ~$10/task mid-tier for multi-step logic chains; ~$100/task
+deep-reasoning for high-value chains. Route cheap → escalate only on
+verified evidence (per Cost honesty above); never open on the $100 tier.
+
+Class-EV priors from 2026 payout data, for seeding `B_ref` and `p_find`:
+commodity XSS ≈ $635/paid report — saturated at 78-82% of hackbot volume,
+avoid; IDOR/authz ≈ $1,265; AI-target vulns $15k–$172k flagships —
+fastest-growing class and whitespace (only ~12% of top AI firms run
+programs); Immunefi critical median $20k.
+
+Supply elasticity: a program that cuts its reward table sees ~22% fewer
+valid reports (~50% fewer criticals). Deprioritize programs that recently
+cut bounties; prefer rising tables — feed reward-table velocity from
+bounty-radar when detectable.
+
 ## Rules
 
 - **The orchestrator writes rows at intent close — workers never write their

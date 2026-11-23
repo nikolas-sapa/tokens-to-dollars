@@ -12,6 +12,7 @@ stdlib only.
 python3 scan.py < fetched-body.html          # JSON verdict to stdout
 python3 scan.py --file bundle.js             # same, from a path
 python3 scan.py --sanitize < fetched.html    # marked-up copy to stdout
+python3 scan.py --egress < report-draft.md   # outbound: +exfil-channel rules
 ```
 
 Output: `{"verdict": "clean|suspicious|hostile", "hits": [{"rule",
@@ -29,6 +30,23 @@ and every literal rule match wrapped in `[REDACTED-<rule>]...[/REDACTED]`
 markers (nested where rules overlap). Verdict + hit count go to stderr;
 exit code still reflects the verdict. Sanitized copy is for the planner —
 the untouched original goes to the evidence dir.
+
+## Egress mode
+
+`--egress` flips direction: the input is agent-generated output (report
+drafts, markdown, URLs quoted in findings) instead of fetched content.
+The full signature pass still runs — injected text can survive a draft —
+plus four egress-only rules:
+
+| rule | sev | catches |
+|---|---|---|
+| `egress-external-image` | high | `![alt](https://…)` fetching a host outside `EGRESS_HOST_ALLOWLIST` (EchoLeak exfil channel) |
+| `egress-external-image-ref` | high | `![alt][ref]` whose `[ref]:` target is external or unresolved |
+| `egress-autofetch-tag` | high | `<img>/<iframe>/<script>/<link src|href="https://…">` — fetches on render |
+| `egress-url-blob` | high | 80+ char base64/hex token inside a URL (data smuggling) |
+
+Relative and allowlisted targets pass. Same verdict enum and exit codes —
+run it on every markdown artifact before it leaves the workspace.
 
 ## Detection passes
 

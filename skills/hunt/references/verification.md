@@ -303,6 +303,35 @@ Two checks run as `tools/fact-verify/verify_claims.py` and fail closed:
 
 Both are mechanical. A verifier who "knows" the quote is right but cannot show it in the stored bytes has an unverified finding.
 
+## Deterministic primitives
+
+Five class-specific primitives turn "looks vulnerable" into mechanically checkable ground truth. Each produces an artifact a verifier can re-run without trusting the agent's judgment — the same fail-closed discipline as the grep checks above.
+
+### OAST correlation (blind classes)
+
+SSRF, XXE, blind RCE, and async deserialization leave no response-side trace, so confirmation requires an out-of-band callback. Issue a unique Interactsh-style token per probe — `<preamble><nonce>.oast.live` — with the nonce bound to the single request that carried it, and watch both DNS and HTTP channels for an inbound hit whose nonce correlates to that request. A correlated callback proves the server fetched attacker-controlled infrastructure. Note the bar: a bare OAST pingback alone is widely triaged Informative, so for payout the finding must escalate the primitive into a demonstrated data-read or state-change, not stop at the callback.
+
+### Browser DOM oracle (client-side classes)
+
+XSS and DOM-based classes are confirmed only by actual JavaScript execution observed in a headless browser running at the target origin. An encoded payload that appears reflected in the markup but never executes is not a finding — it is an escaped string. Anti-reward-hacking rule: the confirmation signal must originate from target-origin execution, never from an agent-asserted string claiming the payload fired.
+
+### Canary planting (authorized accounts and staging)
+
+Where the program permits owned test data, plant a unique canary value and retrieve it through the claimed path: file contents for LFI, database rows for SQLi, fields on account A's profile for IDOR. Retrieval of the exact planted value across the claimed boundary is ground truth; an anomalous response that never surfaces the canary is still a hypothesis.
+
+### Dual-connection desync proof (request smuggling)
+
+A desync is confirmed only when a second connection observes the smuggled effect: response-queue poisoning where a follow-up request receives the smuggled response, or a Collaborator callback fired by the smuggled request. A timeout delta alone is pipelining noise — 90-95% of naive desync claims are HTTP/1.1 pipelining false positives. Method and FP refinements live in `playbooks.md` PB-13.
+
+### Multi-role differential (authorization classes)
+
+Authorization failures are proved only by replaying the same action under a second identity. An admin deactivates account A and token A still reaches the resource — broken. `PUT {"role":"admin"}` replays and the persisted value stays `role=customer` — disproven. Two-account method lives in `playbooks.md` PB-12.
+
+### Two rules for every primitive
+
+- **Incremental step-wise validation.** Each link in an exploit chain is verified before the next intent is attempted — never confirm the whole chain at the end. An unverified middle link makes everything after it unverified too.
+- **Impact-escalation.** The validator must demonstrate the impact it claims: the data read, the callback hit, the state change. Severity is what was demonstrated, never what was plausible — a chain that stops at signal stays `signal_only` or `plausible` regardless of where it was headed.
+
 ## Retest verdicts
 
 When a program reports a finding fixed, re-run the *original intent packet* — same task, same scope, same expected invariant — and record exactly one verdict:

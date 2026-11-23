@@ -146,7 +146,8 @@ def gh_issue_to_draft(it, source="github", note=None, escrowed=False):
         "created_at": it.get("created_at"), "comments": it.get("comments") or 0,
         "labels": labels, "amount_usd": parse_amount(it.get("title") or "", labels),
         "max_reward": None, "source": source, "escrowed": escrowed,
-        "deadline": None, "severity": None, "language": None,
+        "deadline": None, "table_updated_at": None,
+        "severity": None, "language": None,
         "signals": {"linked_prs": 0,
                     "reactions": (it.get("reactions") or {}).get("total_count") or 0,
                     "source_notes": notes},
@@ -163,7 +164,8 @@ def gh_repo_to_draft(r, note):
         "url": r.get("html_url") or "", "created_at": r.get("pushed_at"),
         "comments": 0, "labels": r.get("topics") or [],
         "amount_usd": None, "max_reward": None, "source": "github-extras",
-        "escrowed": False, "deadline": None, "severity": None, "language": None,
+        "escrowed": False, "deadline": None, "table_updated_at": None,
+        "severity": None, "language": None,
         "signals": {"linked_prs": 0, "reactions": 0, "source_notes": [note]},
         "funding_hint": None, "trust": "likely_real", "scam_reasons": [],
         "cross_listed": False,
@@ -288,7 +290,9 @@ def fetch_immunefi():
             "amount_usd": num(p.get("maxBounty")),
             "max_reward": num(p.get("maxBounty")),
             "source": "immunefi", "escrowed": True,
-            "deadline": p.get("endDate"), "severity": None,
+            "deadline": p.get("endDate"),
+            "table_updated_at": p.get("updatedDate"),  # proxy: record changed -> table may have moved
+            "severity": None,
             "language": lang[0] if lang else None,
             "signals": {"linked_prs": 0, "reactions": 0, "source_notes": notes},
             "funding_hint": "escrowed", "trust": "likely_real",
@@ -361,7 +365,7 @@ def merge_fields(keep, lose):
     if keep.get("funding_hint") != "escrowed" and lose.get("funding_hint"):
         keep["funding_hint"] = lose["funding_hint"]
     for k in ("deadline", "amount_usd", "max_reward", "severity", "created_at",
-              "number", "language"):
+              "number", "language", "table_updated_at"):
         if keep.get(k) is None:
             keep[k] = lose.get(k)
     ks, ls = keep["signals"], lose["signals"]
@@ -470,6 +474,7 @@ def to_bounty(d, repo_has_history):
         "scam_flags": d["scam_reasons"], "trust": d["trust"],
         "discovered_at": d["created_at"], "age_days": age,
         "deadline": d["deadline"], "labels": d["labels"],
+        "table_updated_at": d.get("table_updated_at"),
         "comments": d["comments"], "cross_listed": d["cross_listed"],
         "language": d["language"], "severity": d["severity"],
         "value_score": round((reward or 0) * (1 - score / 100), 2),

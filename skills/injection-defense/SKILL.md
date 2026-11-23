@@ -118,6 +118,24 @@ list, not a control — it catches copy-paste payloads while the standing
 rules above handle everything novel. A `clean` verdict lowers suspicion;
 it never grants authority.
 
+## Egress hygiene — scanning the outbound leg
+
+The same filter runs on what leaves. Agent-generated output — report
+drafts, markdown summaries, URLs quoted into findings — is itself an
+exfil channel: a poisoned page can talk the agent into emitting a remote
+image or auto-fetch link that ships data to the attacker's host on render
+(the EchoLeak channel). Before generated markdown leaves the workspace —
+report draft, comment, PR body — pipe it through `scan.py --egress`: the
+full signature pass plus remote-image, auto-fetch-tag, and blob-URL rules.
+External images and auto-fetch links are stripped before send; evidence
+references stay internal paths into `evidence/<finding-id>/`, never
+hosted URLs.
+
+The human gate is content too. Anything rendered in an approval UI —
+fetched page text, tool output, the draft itself — must be the sanitized
+copy: hidden-unicode and bidi payloads can poison the reviewer's read of
+the gate, not just the model's.
+
 ## Trace checks — post-run verification
 
 Adapted from neatroots' check library (`library/questions.yaml`), where

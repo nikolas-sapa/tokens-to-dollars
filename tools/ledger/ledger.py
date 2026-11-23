@@ -67,7 +67,12 @@ def fmt_table(headers, rows):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Scoreboard over memory/ledger.md (see skills/token-ledger).")
+    ap = argparse.ArgumentParser(
+        description="Scoreboard over memory/ledger.md (see skills/token-ledger).",
+        epilog="EV here is realized: paid / spend. Predicted EV per target is "
+               "planning-side, not a ledger column: EV = p_find * prec_val * "
+               "(1-r_dup) * (1-r_info) * B_ref - (C_scan + p_find*C_HITL) -- "
+               "terms in skills/token-ledger and tools/ledger/README.md.")
     ap.add_argument("--ledger", default="memory/ledger.md", help="ledger file (default memory/ledger.md)")
     ap.add_argument("--program", default=None, help="filter to one program")
     ap.add_argument("--ceiling", type=float, default=50.0,

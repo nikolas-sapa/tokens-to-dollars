@@ -37,6 +37,11 @@ relied on and an explicit list of what was not established.
   "claim": "Role B (free-tier acct own-test-2) reads order 8817 owned by own-test-1 — object-level authorization missing on GET /v1/orders/{id}.",
   "verifiedAt": "2026-11-23T14:02:11Z",
   "replay_of": null,
+  "replay": {
+    "request": "evidence/int-042-a/replay.http",
+    "sha256": "<hex>",
+    "note": "raw request that re-fires the trigger as captured"
+  },
   "artifacts": [
     {
       "path": "evidence/int-042-a/request.txt",
@@ -65,6 +70,11 @@ relied on and an explicit list of what was not established.
   end) or `suspected` (strong evidence, trigger not fully exercised).
 - `replay_of` carries the trace id when the capture was produced by
   replaying a recorded trace — lineage, not decoration.
+- `replay` carries a re-issuable request-level artifact (raw HTTP, curl
+  snippet, or replayable trace) that fires the trigger exactly as
+  captured — evidence is a thing a verifier can re-run, not prose about
+  a thing that ran. `null` when the trigger is not safely replayable;
+  say why in `limitation`.
 - `limitation` (or per-artifact `association`/`meaning` fields like
   `referenceCheckMeaning` in the source receipts) states the boundary of
   what the linked file proves.

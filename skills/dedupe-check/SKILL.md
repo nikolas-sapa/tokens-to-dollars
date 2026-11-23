@@ -44,6 +44,30 @@ Search all five; record every query and hit count.
 3. For each hit compare on four axes: same asset? same vuln class? same root
    cause (endpoint/param pattern)? same primitive?
 
+## Multi-view dedup
+
+The four-axis check is necessary but shallow — two reports can share asset
+and class and still be different bugs. Score each candidate match on four
+views independently:
+
+- **Description** — same stated root cause and trigger, not just same CWE.
+- **Reproduction** — same steps and same payload shape after normalization.
+- **Location** — same code path, not just same host. Normalize before
+  comparing: numeric, UUID, and hex path/parameter segments collapse to
+  `{id}` (`/users/4821/orders/9f3a` -> `/users/{id}/orders/{id}`), so an ID
+  difference never masks a same-endpoint match.
+- **Impact** — same demonstrated consequence; a weaker variant of a
+  disclosed bug is still a dup.
+
+The fix boundary is the real test. **Same root cause closed by one patch =
+duplicate**, even across different endpoints or params. **Different fixes
+needed = related-not-duplicate** — score as `partial-overlap` and argue
+independent fix-ability.
+
+Platform math (Coinbase 2026 attrition): 44% duplicate / 37% informative /
+15% invalid / 4% paid. Dedup before submission is the difference between
+Signal-positive and a 90-day H1 pause.
+
 ## Verdicts
 
 - **novel**: no source produced a same-root-cause match. Clears for reporting.

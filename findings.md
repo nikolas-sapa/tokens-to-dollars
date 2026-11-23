@@ -202,3 +202,24 @@ Noted, deferred:
 - platform-deny message framing: 【platform-control·not-target-defense】concept ported as [platform-deny]
 
 Cautionary patterns confirmed from source: regex deny-lists on raw tool_input are porous by construction; exfil-pipe heuristics ship disabled due to real FPs; an open MITM proxy on 0.0.0.0 = open relay (theirs binds loopback only).
+
+
+## Wave 8 — external deep-research report (Nov 23, 2026) key deltas
+
+Report confirmed core design (deterministic validators, human-gated submit, tiered models) and added numbers:
+
+**Platform enforcement (Oct 2026):** H1 Signal slider -1..7 + 3-trial->90d pause; Bugcrowd IDV+CAPTCHA+6/wk@<50% acc; Intigriti IDV@submission + mandatory AI disclosure; YWH credits refund+bonus; Immunefi bans AI-written reports outright (KYC pre-payout); Signal math: Resolved+7, dup-prepublic +2, dup-postpublic -5, N/A -5, Spam -10.
+
+**Validator primitives:** OAST token (preamble+nonce, bare pingback=Informative), DOM oracle at target origin, canary planting, dual-connection desync (90-95% naive claims are pipelining FPs), multi-role differential, incremental per-link validation, impact-escalation (severity = demonstrated not plausible).
+
+**Dedup:** 4-view (Desc/Repro/Loc/Impact) + path-normalization ~90% dup elimination; Coinbase attrition 44% dup/37% info/15% invalid/4% paid.
+
+**EV model:** EV = p_find*prec*(1-r_dup)*(1-r_info)*B_ref - (C_scan + p_find*C_HITL). Class priors: XSS $635 saturated (78-82% hackbot volume), IDOR $1,265, AI-target $15k-172k (whitespace: ~12% of AI firms run programs), Immunefi critical median $20k. Tiers: $0.10/$1/$10/$100 per task. Supply elasticity: bounty cuts -> -22% valid reports.
+
+**Defense:** bidirectional unicode strip (we have inbound, needed egress), MCP schema-hash pinning (rug pull), Guardian-model concept (independent action adjudicator blind to justification), external-image/link stripping in egress.
+
+**Corpus adds (queued):** huntr AI/ML bugs, Solodit API (web3 findings, 10k/day), MegaVul/PrimeVul (cleaner vuln+patch vs ARVO), MoreFixes/CVEfixes.
+
+**Report-writing:** raw HTTP+script pair (Intigriti), direct-upload only (3rd-party hosting = CoC violation), NMI speed matters (Google 1.2x needs <3-day precise replies), per-platform schemas encoded.
+
+**Caution data:** static CTF inflation 2.2-2.4x (memorization); failed runs burn 3.4-5.8x more tokens; XBOW #1 masked <$40K payouts; Kroda plain-Codex nearly matches scaffolded agents (moat is validation+policy+economics, not orchestration complexity).

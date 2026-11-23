@@ -115,6 +115,29 @@ demonstrates. "Could potentially" is a banned phrase.
 | YesWeHack | CVSS score + vector required in the form | Same as H1, French accepted on FR programs | CVSS base + vector string, CWE | Form blocks submission without a valid vector |
 | Immunefi | Impact tiers priced in USD of funds at risk | `[Contract/function] <class> leads to <fund impact>` | Fork-test PoC at pinned block, decoded tx trace, funds-at-risk math, chain + block stated | "Theoretical" impact tiers are rejected; price from on-chain state, show the math |
 
+### Hard schema constraints — bounce-on-upload limits
+
+- **Intigriti:** minimal-dependency PoC scripts (no framework setup); raw
+  HTTP request/response pairs mandatory in the body — raw TCP dumps where
+  the bug is non-HTTP. AI-use disclosure block is mandatory platform-wide:
+  treat `ai_disclosure` as always `required` here.
+- **Bugcrowd:** 25k-char description cap — tighten prose, move dumps to
+  attachments; VRT-mapped severity; up to 20 attachments, each <400MB;
+  files >100MB go on Vimeo only.
+- **HackerOne:** direct uploads only — third-party hosting (YouTube,
+  Imgur, Drive links) is a CoC violation on every platform; video-only
+  PoC is ineligible, written steps must stand alone.
+- **YesWeHack:** structured fields, not one body blob — assets,
+  endpoints, payloads, environment, auth context each get their field.
+- **Immunefi:** English only; local-fork runnable PoC (Foundry/Hardhat
+  project, runs end-to-end); dashboard-only submission, no email channel.
+
+Evidence hygiene, all platforms: never host evidence on third-party
+platforms — direct upload or it does not ship; redact cookies, tokens,
+and third-party PII from captures before upload. Answer NMI
+(needs-more-info) in precise human prose, fast — Google VRP's 1.2x
+multiplier wants replies inside ~3 workdays.
+
 ## Channel: email vs platform
 
 The skeleton and gate above assume a platform form. A large share of

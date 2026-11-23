@@ -33,6 +33,21 @@ append-only markdown tables:
 `memory/` is gitignored local state; `tools/bootstrap.py` seeds the file
 with both table headers.
 
+## Predicted EV (planning-side, not stored)
+
+The EV table reports realized EV (Σ paid / Σ est-$). Picking the next target
+uses predicted EV — these terms are planning inputs from
+`skills/token-ledger` ("EV model + cost-tier routing"), not ledger columns,
+since `p_find`/`prec_val`/`r_dup` are per-target estimates, not per-intent
+actuals:
+
+`EV = p_find × prec_val × (1 − r_dup) × (1 − r_info) × B_ref − (C_scan + p_find × C_HITL)`
+
+p_find = P(finds a reportable vuln) · prec_val = validator precision
+(≥0.95 required) · r_dup = P(duplicate) · r_info = P(N/A closure) ·
+B_ref = class × severity reference payout · C_scan = scan token cost ·
+C_HITL = human validation cost, paid on confirmed candidates only.
+
 ## Honesty note
 
 `est-$` mixes real usage (bare number) and estimates (`e` suffix). Both are

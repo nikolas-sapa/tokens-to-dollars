@@ -72,6 +72,7 @@ funding, max 10 repos).
   "discovered_at": "ISO date the listing appeared upstream (source created_at)",
   "age_days": 5,
   "deadline": null,
+  "table_updated_at": "ISO date (immunefi only) or null",
   "labels": ["..."],
   "comments": 3,
   "cross_listed": true,
@@ -102,6 +103,21 @@ How contested the bounty already is — the moat metric. Signals:
 `competition_band`: <34 low, <67 medium, else high. `competition_score` feeds
 target selection: low competition x high reward = best first hit — that is
 exactly what `value_score` sorts by.
+
+## Ranking caveat — reward-table velocity
+
+`value_score` prices reward x competition only; it does **not** see
+reward-table velocity (recent raises/cuts to a program's payout table).
+Supply is elastic: programs that cut tables draw ~22% fewer valid reports
+(~50% fewer criticals) — recently-cut programs should be deprioritized and
+recently-raised ones preferred when the direction is known.
+
+Cheap signal shipped here: `table_updated_at` carries Immunefi's
+`updatedDate` (null for GitHub sources — issue bounties have no table
+concept). A recent timestamp only means *something* on the record changed —
+verify the direction on the program page before treating it as a raise or a
+cut. No free endpoint exposes per-table diffs; a real velocity signal needs
+a snapshot diff against a previous run's `bounties.jsonl`.
 
 ## Scam filter
 

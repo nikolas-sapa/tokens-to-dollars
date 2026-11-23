@@ -92,13 +92,26 @@ submitter: human                 # ALWAYS human — autonomous submission is out
 ## rate_limits
 rps_cap: null                    # null = unstated -> default-safe profile (<=1 rps, jittered)
 test_accounts: unstated          # required | provided | forbidden | unstated
-submission_cost: null            # optional — YesWeHack credits, Cantina deposits, Bugcrowd IDV throttles
+submission_cost: null            # optional — YesWeHack credits (refunded + bonus on acceptance),
+                                 # Sherlock USDC stake (forfeited on invalid), Cantina deposits
 notes: ""
 
 ## safe_harbor
 status: true
 disclosure: coordinated          # coordinated | nda-bound | none | unstated
 embargo_days: null
+
+## enforcement
+# program-reality, not scope — these shape EV and pacing, never authorization;
+# anything unstated defaults to its most restrictive reading
+signal_gate: null                # min account Signal to submit — H1 programs gate at a
+                                 # configurable -1.0..7.0; newcomers get 3 trial reports,
+                                 # then a 90-day pause on the 3rd failure
+submission_throttle: null        # account-level report-rate cap — Bugcrowd: 6/week below
+                                 # 50% accuracy; new accounts throttled by default
+idv_required: unstated           # payout | submission | none — Intigriti moved IDV to
+                                 # submission Oct 2026; Bugcrowd mandatory on managed programs
+trial_quota: null                # newcomer allowances — H1: 3 trial reports; GitHub: 4
 
 ## unknowns
 # not found in source: each item is treated as its most restrictive reading
@@ -118,6 +131,9 @@ embargo_days: null
   and older manifests never authorize anything.
 - **Prohibited-method ceilings are hard.** A worker that cannot operate under
   the ceiling for a target is not dispatched there.
+- **`enforcement` fields are program-reality, not scope.** Signal gates,
+  throttles, IDV, and trial quotas shape EV and pacing — they never
+  authorize, widen, or narrow `authorized_assets`.
 
 ## Minimal-scope extraction
 

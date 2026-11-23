@@ -5,6 +5,7 @@ Hand-rolled, stdlib only: one JSON-RPC message per line. Each tool shells out
 to the repo CLI script of the same name — same behavior as running it by hand.
 Run: python3 tools/mcp-server.py   (or point a client's .mcp.json at it)
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -13,6 +14,7 @@ from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("T2D_ROOT") or TOOLS_DIR.parent).resolve()
+PIN_FILE = ROOT / "memory" / "mcp-pins.json"
 PATH_ARGS = {"log", "sidecar", "out_dir", "file"}
 _TYPES = {"string": str, "boolean": bool, "integer": int,
           "number": (int, float), "array": list, "object": dict}
@@ -169,6 +171,36 @@ TOOLS = {
 }
 
 
+def _tool_hash(name, t):
+    blob = name + "\0" + json.dumps(
+        {"description": t["description"], "inputSchema": t["inputSchema"]},
+        sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _pins_write():
+    PIN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PIN_FILE.write_text(json.dumps(
+        {n: _tool_hash(n, t) for n, t in TOOLS.items()},
+        indent=2, sort_keys=True) + "\n")
+
+
+def _pins_check():
+    """Tools whose (name, description, inputSchema) hash differs from the
+    stored pin; writes the baseline and returns empty on first run."""
+    if not PIN_FILE.exists():
+        _pins_write()
+        return set()
+    pins = json.loads(PIN_FILE.read_text())
+    return {n for n, t in TOOLS.items()
+            if pins.get(n) != _tool_hash(n, t)}
+
+
+def _rug_pull_warn(drifted):
+    print("rug-pull suspected: %s — re-review description before calling"
+          % ", ".join(sorted(drifted)), file=sys.stderr)
+
+
 def err(text):
     return {"content": [{"type": "text", "text": text}], "isError": True}
 
@@ -201,6 +233,14 @@ def run_tool(name, args):
 
 
 def main():
+    if set(sys.argv[1:]) & {"--rescan", "--pin-refresh"}:
+        old = json.loads(PIN_FILE.read_text()) if PIN_FILE.exists() else {}
+        _pins_write()
+        new = json.loads(PIN_FILE.read_text())
+        drift = [n for n in new if old.get(n) != new[n]]
+        print("pins refreshed: %d tools%s"
+              % (len(new), "; updated: " + ", ".join(drift) if drift else ""))
+        return
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -219,10 +259,21 @@ def main():
             resp = {"protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "tokens-to-dollars", "version": "0.1.0"}}
+            drifted = _pins_check()
+            if drifted:
+                _rug_pull_warn(drifted)
         elif method == "tools/list":
+            drifted = _pins_check()
+            if drifted:
+                _rug_pull_warn(drifted)
             resp = {"tools": [{"name": n, "description": t["description"],
                                "inputSchema": t["inputSchema"]}
                               for n, t in TOOLS.items()]}
+            for tool in resp["tools"]:
+                if tool["name"] in drifted:
+                    tool["description"] = (
+                        "[rug-pull suspected — re-review description "
+                        "before calling] " + tool["description"])
         elif method == "tools/call":
             p = req.get("params") or {}
             name = p.get("name")

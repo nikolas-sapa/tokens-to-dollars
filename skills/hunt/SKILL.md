@@ -47,7 +47,7 @@ A proven finding triggers stop-on-proof for that weakness; the hunt continues on
 | PB | Name | When to use | Gate ceiling |
 |----|------|-------------|--------------|
 | PB-1 | GraphQL: introspection-to-takeover | Target exposes a GraphQL endpoint; highest value where identity mutations (password reset, email change, OTP, token issuance) take arbitrary `username`/`email` args | G3 (abuse primitives; credential-guessing variant lab-only) |
-| PB-2 | AI agent tool abuse (confused deputy) | Application embeds an AI agent with registered tools; map tool capabilities and read them for absent boundaries | G3 (cloud-metadata probes through an SSRF sink) |
+| PB-2 | AI agent tool abuse (confused deputy) | Application embeds an AI agent with registered tools or an MCP toolchain; map tool capabilities, read them for absent boundaries, test indirect-injection → rogue-action chains; co-priority-tier with PB-12 (top-EV AI-target class, 2026) | G3 (rogue-action escalation; cloud-metadata probes through an SSRF sink) |
 | PB-3 | WebSocket event protocols and captcha-gated agent endpoints | CAPTCHA/bot-gated chat or agent endpoints; WS protocols where a client-submitted event flips server-side authorization | G2 |
 | PB-4 | Race conditions: single-endpoint TOCTOU and HTTP/2 single-packet | Check-then-act writes to shared state — contact confirmation flows, coupon/fund redemption, rate-limit windows | G3 (G3 throughout method B; first-sequence sync lab-only) |
 | PB-5 | SAML assertion confusion | SAML service providers in enterprise SSO; replay, single-variable mutation, XSW | G3 |
