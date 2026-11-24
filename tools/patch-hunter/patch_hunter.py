@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -454,6 +455,316 @@ def do_variants(a):
     return 0
 
 
+# --- synthesize (KNighter-lite) ----------------------------------------------
+# Compile a seed into a standalone static checker. The seed is the expensive
+# part (a fix commit, diffed once); the emitted script is pure regex, so every
+# re-scan of any repo costs zero model tokens.
+
+CHECKER_DIR = Path(__file__).resolve().parents[2] / "memory" / "checkers"
+SIG_MIN_LEN = 12
+SIG_CAP = 24
+CHECKER_TIMEOUT = 300
+
+# Emitted-script body. Tokens @X@ are substituted by render_checker; the
+# script itself stays f-string-free. Contract: argv[1] = repo path, stdout =
+# JSONL {file, line, reason, bug_class, seed}.
+CHECKER_TEMPLATE = '''#!/usr/bin/env python3
+# patch-hunter synthesized checker (KNighter-lite: fix commit -> static checker)
+# bug-class: @BUG_CLASS@
+# seed-commit: @SEED_COMMIT@
+# seed: @SEED_PATH@
+# generated: @GENERATED@
+"""Scan argv[1] for the pre-patch shape of @SEED_SHORT@. Stdout is JSONL
+{file, line, reason, bug_class, seed}. Regex only — no model calls."""
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+CONFIG = @CONFIG_JSON@
+
+SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "__pycache__",
+             ".tox", ".venv", "dist", "build"}
+MAX_FILE_KB = 2048
+
+TERM_RE = re.compile(CONFIG["term_re"]) if CONFIG.get("term_re") else None
+GUARD_RE = (re.compile(CONFIG["guard_re"]) if CONFIG.get("guard_re")
+            else None)
+SIG_RES = [(s["label"], re.compile(s["re"]))
+           for s in CONFIG.get("signatures", [])]
+WINDOW = CONFIG.get("window", 8)
+
+
+def iter_text_files(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in filenames:
+            p = Path(dirpath) / name
+            try:
+                if p.stat().st_size > MAX_FILE_KB * 1024:
+                    continue
+                with p.open("rb") as f:
+                    if b"\\x00" in f.read(8192):
+                        continue
+                yield p
+            except OSError:
+                continue
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit("usage: %s <repo-path>" % sys.argv[0])
+    root = Path(sys.argv[1])
+    if not root.is_dir():
+        sys.exit("error: not a directory: %s" % root)
+    common = {"bug_class": CONFIG["bug_class"], "seed": CONFIG["seed_commit"]}
+    for p in iter_text_files(root):
+        try:
+            lines = (p.read_text(encoding="utf-8", errors="replace")
+                     .splitlines())
+        except OSError:
+            continue
+        try:
+            rel = str(p.relative_to(root))
+        except ValueError:
+            rel = str(p)
+        sig_seen = set()
+        for i, line in enumerate(lines):
+            sig_hits = [label for label, rx in SIG_RES if rx.search(line)]
+            terms = (sorted({m.group(1) for m in TERM_RE.finditer(line)})
+                     if TERM_RE is not None else [])
+            if not sig_hits and not terms:
+                continue
+            lo, hi = max(0, i - WINDOW), min(len(lines), i + WINDOW + 1)
+            near = "\\n".join(lines[lo:hi])
+            # guarded site = post-patch shape: suppress both hit kinds
+            guarded = GUARD_RE is not None and GUARD_RE.search(near)
+            if guarded:
+                continue
+            for label in sig_hits:
+                if (i, label) in sig_seen:
+                    continue
+                sig_seen.add((i, label))
+                rec = {"file": rel, "line": i + 1,
+                       "reason": "removed pattern still present "
+                                 "(unguarded): %s" % label}
+                rec.update(common)
+                print(json.dumps(rec, sort_keys=True))
+            if terms:
+                rec = {"file": rel, "line": i + 1,
+                       "reason": "call to %s without guard terms (%s) "
+                                 "within %d lines"
+                                 % ("/".join(terms),
+                                    ", ".join(CONFIG["guard_terms"])
+                                    or "(none recorded)", WINDOW)}
+                rec.update(common)
+                print(json.dumps(rec, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def checker_dir(a):
+    d = Path(getattr(a, "dir", None) or CHECKER_DIR)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def guard_re_for(lang, guards):
+    """The fix's guard is an if-condition; shape differs per language."""
+    pat = "|".join(re.escape(g) for g in guards)
+    if lang == "py":
+        return r"\bif\b[^\n:]*\b(%s)\b" % pat
+    return r"\bif\s*\([^)]*\b(%s)\b" % pat      # c, js
+
+
+def removed_signatures(seed):
+    """Normalized `-` lines -> literal-ish regexes (tokens joined by \\s+,
+    so indentation is free but the code shape is exact). Lines too short or
+    punctuation-only are dropped — a `}` signature would match everything."""
+    sigs, seen = [], set()
+    for f in seed.get("files", []):
+        for h in f.get("hunks", []):
+            for l in h.get("removed", []):
+                norm = re.sub(r"\s+", " ", l.strip())
+                if (len(norm) < SIG_MIN_LEN
+                        or not re.search(r"[A-Za-z_]\w{2,}", norm)
+                        or norm in seen):
+                    continue
+                seen.add(norm)
+                sigs.append({
+                    "label": norm[:80],
+                    "re": r"\s+".join(re.escape(t) for t in norm.split(" "))})
+    return sigs[:SIG_CAP]
+
+
+def render_checker(seed, seed_path, lang, window):
+    calls = seed.get("calls") or {}
+    terms = sorted(set(seed.get("changed_functions", []))
+                   | set(calls.get("removed", []))
+                   | set(calls.get("context", [])))
+    terms = [t for t in terms if 2 < len(t) <= MAX_TERM_LEN]
+    guards = sorted(set(seed.get("added_guard_terms", [])))
+    sigs = removed_signatures(seed)
+    if not terms and not sigs:
+        return None, None, {"terms": [], "guards": guards, "signatures": []}
+    cfg = {"term_re": (r"\b(%s)\b" % "|".join(re.escape(t) for t in terms)
+                       if terms else None),
+           "guard_re": guard_re_for(lang, guards) if guards else None,
+           "guard_terms": guards,
+           "signatures": sigs,
+           "window": window,
+           "lang": lang,
+           "bug_class": seed.get("bug_class", {}).get("class", "unknown"),
+           "seed_commit": seed.get("commit", {}).get("sha", "unknown")}
+    src = (CHECKER_TEMPLATE
+           .replace("@CONFIG_JSON@", json.dumps(cfg, indent=1))
+           .replace("@BUG_CLASS@", cfg["bug_class"])
+           .replace("@SEED_COMMIT@", cfg["seed_commit"])
+           .replace("@SEED_SHORT@", cfg["seed_commit"][:12])
+           .replace("@SEED_PATH@", str(seed_path))
+           .replace("@GENERATED@", utcnow()))
+    return cfg, src, {"terms": terms, "guards": guards,
+                      "signatures": len(sigs)}
+
+
+def fixture_tree(seed, kind, dest):
+    """Reconstruct a fake tree from stored hunks: context + removed (pre) or
+    context + added (post). Order inside a hunk is lost (they're stored
+    split) but every signature line survives verbatim."""
+    n = 0
+    for f in seed.get("files", []):
+        lines = []
+        for h in f.get("hunks", []):
+            lines += h.get("context_lines", [])
+            lines += h.get("removed" if kind == "pre" else "added", [])
+        if not lines:
+            continue
+        path = re.sub(r"[^A-Za-z0-9_.-]+", "_", f.get("path") or "file.c")
+        fp = Path(dest) / path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        n += 1
+    return n
+
+
+def control_fixture(dest):
+    """Benign code with no seed terms — a checker that fires here matches
+    everything and must be rejected."""
+    Path(dest).mkdir(parents=True, exist_ok=True)
+    (Path(dest) / "control.c").write_text(
+        "static int helper_fn(int v)\n{\n\tint r = v + 1;\n\treturn r;\n}\n")
+
+
+def run_checker_script(path, repo):
+    r = subprocess.run([sys.executable, str(path), str(repo)],
+                       capture_output=True, text=True,
+                       timeout=CHECKER_TIMEOUT)
+    if r.returncode:
+        raise RuntimeError("checker exited %d: %s"
+                           % (r.returncode, r.stderr.strip()[:300]))
+    return [json.loads(l) for l in r.stdout.splitlines() if l.strip()]
+
+
+def do_synthesize(a):
+    seed_path = Path(a.seed)
+    seed = json.loads(seed_path.read_text())
+    cfg, src, stats = render_checker(seed, seed_path, a.lang, a.window)
+    if src is None:
+        sys.exit("error: nothing to synthesize — seed has no search terms "
+                 "and no usable removed-line signatures")
+    sha12 = cfg["seed_commit"][:12]
+    cid = re.sub(r"[^a-z0-9-]+", "-",
+                 ("%s-%s" % (sha12, cfg["bug_class"])).lower()).strip("-")
+    dest_dir = checker_dir(a)
+    dest = dest_dir / (cid + ".py")
+    if dest.exists():
+        cid = "%s-%s" % (cid, hashlib.sha256(
+            seed_path.read_bytes()).hexdigest()[:6])
+        dest = dest_dir / (cid + ".py")
+    with tempfile.TemporaryDirectory(prefix="patch-hunter-synth-") as td:
+        cand = Path(td) / (cid + ".py")
+        cand.write_text(src, encoding="utf-8")
+        pre, post, ctrl = (Path(td) / "pre", Path(td) / "post",
+                           Path(td) / "control")
+        fixture_tree(seed, "pre", pre)
+        fixture_tree(seed, "post", post)
+        control_fixture(ctrl)
+        pre_hits = run_checker_script(cand, pre)
+        post_hits = run_checker_script(cand, post)
+        ctrl_hits = run_checker_script(cand, ctrl)
+        # TODO(knighter-validation): fixtures are reconstructed from hunks.
+        # With a real repo+commit pair, check out the parent tree (pre) and
+        # the fix commit (post) and require >=1 hit pre / 0 hits post — the
+        # true KNighter bar.
+        if not pre_hits:
+            sys.exit("error: checker rejected — 0 hits on the pre-patch "
+                     "fixture (it does not even flag its own bug)")
+        if ctrl_hits:
+            sys.exit("error: checker rejected — %d hit(s) on the control "
+                     "fixture; too loose" % len(ctrl_hits))
+        dest.write_text(src, encoding="utf-8")
+        dest.chmod(0o755)
+    warn = ("post-patch fixture still flags %d site(s) — review sigs/terms"
+            % len(post_hits)) if post_hits else None
+    print(json.dumps({"ok": True, "checker": cid, "path": str(dest),
+                      "bug_class": cfg["bug_class"], "seed": cfg["seed_commit"],
+                      "terms": stats["terms"], "guard_terms": stats["guards"],
+                      "signatures": stats["signatures"],
+                      "validation": {"pre_hits": len(pre_hits),
+                                     "post_hits": len(post_hits),
+                                     "control_hits": len(ctrl_hits)},
+                      "warning": warn}, indent=2))
+    return 0
+
+
+def checker_meta(path):
+    meta = {"id": path.stem, "path": str(path)}
+    try:
+        head = path.read_text(encoding="utf-8",
+                              errors="replace").splitlines()[:10]
+    except OSError:
+        return meta
+    for l in head:
+        m = re.match(r"# (bug-class|seed-commit|seed|generated):\s*(.*)", l)
+        if m:
+            meta[m.group(1).replace("-", "_")] = m.group(2).strip()
+    return meta
+
+
+def do_checkers(a):
+    d = checker_dir(a)
+    metas = [checker_meta(p) for p in sorted(d.glob("*.py"))]
+    print(json.dumps({"ok": True, "dir": str(d), "checkers": metas},
+                     indent=2))
+    return 0
+
+
+def do_run_checker(a):
+    path = checker_dir(a) / (a.id + ".py")
+    if not path.is_file():
+        known = sorted(p.stem for p in path.parent.glob("*.py"))
+        sys.exit("error: no checker %r in %s (known: %s)"
+                 % (a.id, path.parent, ", ".join(known) or "none"))
+    hits = run_checker_script(path, a.repo)
+    if a.out:
+        out = Path(a.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w") as f:
+            for h in hits:
+                f.write(json.dumps(h, sort_keys=True) + "\n")
+    else:
+        for h in hits:
+            print(json.dumps(h, sort_keys=True))
+    print(json.dumps({"ok": True, "checker": a.id, "repo": a.repo,
+                      "hits": len(hits),
+                      "out": a.out or None}, indent=2), file=sys.stderr)
+    return 0
+
+
 # --- watch -------------------------------------------------------------------
 
 def watch_key(entry):
@@ -559,7 +870,9 @@ def main():
         description="Diff-seeded variant analysis: every security fix commit "
                     "is a hunt seed (PatchSlop / CopyFail). seed parses a fix "
                     "diff, variants grep-hunts unpatched siblings, watch polls "
-                    "repos for new fix commits and emits patch-seed triggers.")
+                    "repos for new fix commits and emits patch-seed triggers, "
+                    "synthesize compiles a seed into a reusable zero-token "
+                    "checker (KNighter-lite).")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("seed", help="parse a fix commit diff -> seed.json")
@@ -595,9 +908,32 @@ def main():
     p.add_argument("--lookback", type=int, default=0,
                    help="first run: scan last N commits instead of pure "
                         "baseline (default 0)")
+
+    p = sub.add_parser("synthesize", help="compile seed.json into a standalone "
+                       "static checker (KNighter-lite): emits memory/checkers/"
+                       "<sha>-<class>.py after self-test on hunk fixtures")
+    p.add_argument("--seed", required=True, help="seed.json from `seed`")
+    p.add_argument("--lang", choices=["c", "py", "js"], default="c",
+                   help="source language of the scanned repos — sets the "
+                        "guard-regex shape (default c)")
+    p.add_argument("--window", type=int, default=8,
+                   help="lines around a callsite to look for the fix's guard")
+    p.add_argument("--dir", help="checker dir (default <repo>/memory/checkers)")
+
+    p = sub.add_parser("checkers", help="list synthesized checkers "
+                                       "(id, bug-class, seed commit)")
+    p.add_argument("--dir", help="checker dir (default <repo>/memory/checkers)")
+
+    p = sub.add_parser("run-checker", help="run one synthesized checker -> "
+                                           "JSONL on stdout")
+    p.add_argument("id", help="checker id (see `checkers`)")
+    p.add_argument("--repo", required=True, help="repo path to scan")
+    p.add_argument("--out", help="write JSONL here instead of stdout")
+    p.add_argument("--dir", help="checker dir (default <repo>/memory/checkers)")
     args = ap.parse_args()
-    return {"seed": do_seed, "variants": do_variants,
-            "watch": do_watch}[args.cmd](args)
+    return {"seed": do_seed, "variants": do_variants, "watch": do_watch,
+            "synthesize": do_synthesize, "checkers": do_checkers,
+            "run-checker": do_run_checker}[args.cmd](args)
 
 
 if __name__ == "__main__":

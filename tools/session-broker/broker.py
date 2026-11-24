@@ -16,6 +16,10 @@ never the value; this broker is the only reader.
            [--refresh-url U [--refresh-method M]] [--probe-url U]
            [--auth-endpoint U] [--totp-seed BASE32] [--max-failures N]
   token    --program X [--account a|b]      -> prints the live token
+  inject   --program X --tool httpx [--account a|b]
+                                            -> prints the stamped argv
+                                               fragment (JSON list) for
+                                               that tool's header flag
   refresh  --program X [--account a|b]      -> runs the refresh_url flow
   status   [--json]                         -> liveness probe per program
   expire-check --program X --status N [--location U] [--account a|b]
@@ -23,8 +27,9 @@ never the value; this broker is the only reader.
   totp     --program X                      -> current 6-digit TOTP code
   unpark   --program X                      -> reset the circuit breaker
 
-The second slot (`--account b`) exists for IDOR work: two victims, two
-sessions, same program — the proxy picks the slot per request.
+`--account` may be spelled `--slot` on any verb that takes it. The
+second slot (`b`) exists for IDOR work: two victims, two sessions, same
+program — the proxy picks the slot per request.
 
 Circuit breaker: `expire-check` and a rejected `refresh` count
 consecutive auth failures per slot; at --max-failures (default 3) the
@@ -172,13 +177,19 @@ def jwt_exp(token):
     return datetime.fromtimestamp(exp, timezone.utc).isoformat()
 
 
-def stamp_auth(req, auth_type, token):
+def auth_header(auth_type, token):
+    """The one header an egress point stamps, in 'Name: value' form —
+    single source of truth for inject fragments and urllib stamping."""
     if auth_type == "cookie":
-        req.add_header("Cookie", token)
-    elif auth_type == "basic":
-        req.add_header("Authorization", "Basic " + token)
-    else:
-        req.add_header("Authorization", "Bearer " + token)
+        return "Cookie: " + token
+    if auth_type == "basic":
+        return "Authorization: Basic " + token
+    return "Authorization: Bearer " + token
+
+
+def stamp_auth(req, auth_type, token):
+    name, _, val = auth_header(auth_type, token).partition(": ")
+    req.add_header(name, val)
 
 
 def detect(status, location):
@@ -338,6 +349,44 @@ def cmd_token(a):
                "did not resolve)" % (a.program, a.account,
                                      slot_creds_ref(rec, a.account)))
     print(tok)
+    return 0
+
+
+# Tools whose CLI takes a repeated "Name: value" header flag. Anything
+# not listed cannot carry stamped auth — passive collectors (gau,
+# waybackurls) hit third parties and would leak the session; DNS/local
+# tools have no header to stamp. Refusing is the fail-safe.
+HEADER_FLAGS = {"httpx": "-H", "nuclei": "-H", "katana": "-H",
+                "ffuf": "-H", "x8": "-H", "arjun": "--headers"}
+
+
+def cmd_inject(a):
+    """Print the argv fragment that stamps this program's session onto
+    the named tool — one JSON list, e.g. ["-H", "Authorization: Bearer
+    .."]. The egress point (wrap.py, a proxy) appends it verbatim, so
+    the tool-header mapping lives here, not in every caller."""
+    flag = HEADER_FLAGS.get(a.tool)
+    if flag is None:
+        die(3, "tool %r cannot carry injected auth (header-capable: %s)"
+            % (a.tool, ", ".join(sorted(HEADER_FLAGS))))
+    vault = load_vault(a.vault)
+    rec = get_rec(vault, a.program)
+    check_parked(rec)
+    sl = slot_of(rec, a.account)
+    state, exp = expiry_state(sl)
+    if state == "expired":
+        die(4, "%s token for %r expired at %s — run refresh"
+            % (a.account, a.program, exp))
+    tok = live_token(rec, a.account)
+    if not tok:
+        die(3, "no token material for %r account %s (creds_ref %r "
+               "did not resolve)" % (a.program, a.account,
+                                     slot_creds_ref(rec, a.account)))
+    header = auth_header(rec.get("auth_type"), tok)
+    if "\n" in header or "\r" in header:
+        die(6, "token material for %r contains CR/LF — refusing to stamp"
+            % a.program)
+    print(json.dumps([flag, header]))
     return 0
 
 
@@ -551,7 +600,8 @@ def main(argv):
 
     def common(p):
         p.add_argument("--program", required=True)
-        p.add_argument("--account", choices=["a", "b"], default="a")
+        p.add_argument("--account", "--slot", choices=["a", "b"],
+                       default="a")
 
     p = sub.add_parser("register")
     common(p)
@@ -577,6 +627,13 @@ def main(argv):
     p = sub.add_parser("token")
     common(p)
     p.set_defaults(fn=cmd_token)
+
+    p = sub.add_parser("inject")
+    common(p)
+    p.add_argument("--tool", required=True,
+                   help="wrapped tool name (header-capable: %s)"
+                        % ", ".join(sorted(HEADER_FLAGS)))
+    p.set_defaults(fn=cmd_inject)
 
     p = sub.add_parser("refresh")
     common(p)

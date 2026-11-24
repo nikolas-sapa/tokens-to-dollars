@@ -28,8 +28,13 @@ worker            egress proxy              broker.py            vault
 - **Broker** — this script. The only reader/writer of the vault.
   Registers programs, emits tokens, runs refreshes, probes liveness,
   enforces the circuit breaker.
-- **Proxy** — reads `token --program X` output, stamps auth, calls
-  `expire-check` on every response. Never hands the token downstream.
+- **Proxy** — reads `token --program X` (or `inject` for argv-level
+  stamping) output, stamps auth, calls `expire-check` on every response.
+  Never hands the token downstream. `tools/wrap/wrap.py` is this layer
+  for shell-spawned tools: a manifest `session:` field makes wrap fetch
+  an `inject` fragment, splice it into the child argv, scrub the token
+  out of everything it re-emits, and feed observed 401/403/302-login
+  signals back to `expire-check`.
 - **Workers** — hold no credential, ever. A compromised or hijacked
   worker can still send *requests*, but cannot leak a session it was
   never given.
@@ -59,7 +64,8 @@ worker            egress proxy              broker.py            vault
   `security(1)` for a generic password. Registering never copies source
   creds beyond the live token field.
 - `token`/`expires_at` are slot `a`; `second_account` is slot `b` —
-  the IDOR pair, same program, two victims (`--account b`).
+  the IDOR pair, same program, two victims (`--account b`; `--slot` is
+  an accepted spelling on every verb that takes `--account`).
 - `totp_seed` is the base32 MFA seed, stored in the vault (0600, not
   the worker env). `totp --program X` emits the current code; a proxy
   sidecar fills OTP prompts without the seed entering context.
@@ -90,11 +96,31 @@ stops that before it starts.
 |---|---|---|
 | `register` | create/update a program record (token via `--token`, `--creds-env`, creds_ref, or tty prompt) | 0 |
 | `token` | print the live token — for the proxy, not workers | 0 / 3 no material / 4 expired / 5 parked |
+| `inject` | print the stamped argv fragment for `--tool` as a JSON list (`["-H","Authorization: Bearer …"]`); egress appends verbatim | 0 / 3 no material or tool can't carry auth / 4 expired / 5 parked / 6 CR-LF in token |
 | `refresh` | call `refresh_url`, extract new token (JSON field or Set-Cookie), reset failures | 0 / 4 rejected / 5 parked / 6 fetch error |
 | `status` | per-program expiry + GET `probe_url` liveness check | 0 healthy / 4 any expired / 5 any parked |
 | `expire-check` | feed an observed `--status`/`--location`; detects 401/403 and 302→login | 0 alive / 4 expired / 5 parked |
 | `totp` | emit the current TOTP code (`--at`, `--digits` for tests) | 0 / 3 no seed |
 | `unpark` | clear `parked` and reset failure counters | 0 |
+
+## `inject` — the argv-stamping contract
+
+`inject --program X --tool T [--account a|b]` exists so egress callers
+(wrap.py, a forward proxy) stay dumb: the broker owns both the
+`auth_type → header` mapping and the `tool → header flag` mapping. It
+prints one JSON list of argv tokens to append to the child command —
+currently always `[flag, "Name: value"]`:
+
+| tool | flag | header stamped |
+|---|---|---|
+| httpx, nuclei, katana, ffuf, x8 | `-H` | `Authorization: Bearer|Basic <tok>` or `Cookie: <tok>` |
+| arjun | `--headers` | same |
+
+Any tool not listed is refused (exit 3): archive collectors
+(gau/waybackurls) would leak the session to third-party endpoints, and
+DNS/local tools have no header to stamp. Refusal is the fail-safe —
+the caller must not run the tool unstamped under a session scope.
+Tokens containing CR/LF are refused outright (header injection).
 
 ## DBSC / SSO caveats (integration point)
 

@@ -6,6 +6,7 @@ to the repo CLI script of the same name — same behavior as running it by hand.
 Run: python3 tools/mcp-server.py   (or point a client's .mcp.json at it)
 """
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -22,6 +23,32 @@ _TYPES = {"string": str, "boolean": bool, "integer": int,
 
 class InvalidParams(Exception):
     pass
+
+
+# Adjudication is delegated to guardian.py — one judge, one decision log.
+# Loaded the way guardian loads wrap.py; a missing adjudicator never
+# fails open (see adjudicate()).
+_GUARDIAN_PATH = TOOLS_DIR / "guardian" / "guardian.py"
+_DECISION_LOG = str(ROOT / "memory" / "audit.jsonl")
+
+
+def _load_guardian():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "t2d_guardian", _GUARDIAN_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+guardian = _load_guardian()
+
+# Harmless Mode classes guardian emits as rule names (payload_ prefixed
+# when the hit was inside an embedded payload body).
+_HARMLESS = {"persistence", "tunneling", "dos_shaped", "brute_force",
+             "file_write_delete", "destructive_request"}
 
 
 def script(*parts):
@@ -205,6 +232,102 @@ def err(text):
     return {"content": [{"type": "text", "text": text}], "isError": True}
 
 
+def _manifest_path(args):
+    """Resolve the engaged program's roe-manifest on the same path
+    wrap.py's --manifest takes: an explicit `manifest` argument wins,
+    then T2D_MANIFEST, then a single engaged program under
+    memory/targets/. None when absent or ambiguous — the adjudicator
+    fails closed on it."""
+    m = args.get("manifest") or os.environ.get("T2D_MANIFEST")
+    if isinstance(m, str) and m.strip():
+        p = Path(m).expanduser()
+        return str(p if p.is_absolute() else ROOT / p)
+    cands = sorted(ROOT.glob("memory/targets/*/roe-manifest.*"))
+    return str(cands[0]) if len(cands) == 1 else None
+
+
+def _action_argv(name, args):
+    """Logical argv of the proposed call — the object guardian judges.
+    wrap's action is the wrapped binary, its argv, and the piped target
+    lines; every other tool is its name plus its flags. Local path
+    operands (PATH_ARGS) are repo files, not remote targets, and stay
+    out of the action — as does the python-interpreter/script plumbing
+    of the real subprocess, which would only be misread as a file of
+    targets."""
+    if name == "wrap":
+        argv = [args["tool"]] + [str(x) for x in args.get("tool_args") or []]
+        argv += [l.strip() for l in (args.get("stdin") or "").splitlines()
+                 if l.strip()]
+        return argv
+    return [name] + flags(args, skip=PATH_ARGS | {"stdin"})
+
+
+def _action_id(action):
+    """sha256 of the canonical action — same digest record_decision
+    stores, so an escalation's hold id names its decision-log entry."""
+    return "sha256:" + hashlib.sha256(json.dumps(
+        action, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def adjudicate(name, args):
+    """Route the proposed call through guardian before dispatch — the
+    MCP-path half of guardian's documented integration point. Returns
+    the verdict dict plus a hold id. Never fails open: an adjudicator
+    that cannot load or cannot prove the action yields escalate, and
+    guardian's own fail-closed verdicts (scope engine gone, manifest
+    unreadable) pass through unchanged."""
+    action = {"type": "shell", "argv": _action_argv(name, args),
+              "cwd": str(ROOT)}
+    if guardian is None:
+        v = {"verdict": "escalate", "rule": "guardian_unavailable",
+             "reason": "cannot load adjudicator %s" % _GUARDIAN_PATH}
+    elif guardian.wrap is None:
+        v = {"verdict": "deny", "rule": "scope_engine_unavailable",
+             "reason": "cannot load scope logic from %s"
+                       % guardian._WRAP_PATH}
+    else:
+        mpath = _manifest_path(args)
+        if mpath is None:
+            v = {"verdict": "escalate", "rule": "manifest_unresolved",
+                 "reason": "no engaged-program manifest: pass 'manifest', "
+                           "set T2D_MANIFEST, or leave exactly one "
+                           "memory/targets/<program>/roe-manifest.*"}
+        else:
+            try:
+                mf = guardian.load_manifest(mpath)
+            except (OSError, ValueError, KeyError) as e:
+                v = {"verdict": "deny", "rule": "manifest_unreadable",
+                     "reason": "cannot load manifest %s: %s" % (mpath, e)}
+            else:
+                try:
+                    v = guardian.judge(action, mf)
+                except Exception as e:
+                    v = {"verdict": "escalate", "rule": "guardian_error",
+                         "reason": "adjudicator failed closed: %s" % e}
+    if guardian is not None:
+        try:
+            guardian.record_decision(_DECISION_LOG, action, v)
+        except Exception as e:
+            print("mcp-server: decision-log append failed: %s" % e,
+                  file=sys.stderr)
+    v["hold"] = _action_id(action)
+    return v
+
+
+def _blocked(v):
+    """Structured non-executed result for an escalate/deny verdict."""
+    if v["verdict"] == "escalate":
+        payload = {"status": "escalated", "hold": v["hold"],
+                   "rule": v["rule"], "reason": v["reason"]}
+    else:
+        cls = v["rule"][8:] if v["rule"].startswith("payload_") else v["rule"]
+        payload = {"status": "denied", "rule": v["rule"],
+                   "class": cls if cls in _HARMLESS else None,
+                   "reason": v["reason"]}
+    return {"content": [{"type": "text", "text": json.dumps(payload)}],
+            "isError": True}
+
+
 def run_tool(name, args):
     t = TOOLS.get(name)
     if t is None:
@@ -214,6 +337,9 @@ def run_tool(name, args):
         cmd = t["cmd"](args)
     except (KeyError, TypeError) as e:
         return err("%s: bad arguments: %s" % (name, e))
+    v = adjudicate(name, args)
+    if v["verdict"] != "allow":
+        return _blocked(v)
     try:
         # stdin must never reach the child: tools like wrap.py read piped
         # stdin and would swallow the JSON-RPC channel. DEVNULL, or an

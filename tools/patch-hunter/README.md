@@ -11,9 +11,11 @@ still unfixed elsewhere. Python 3.9+, stdlib only (`git` via subprocess).
   underflow by *variant analysis*: take a known-buggy pattern and search the
   codebase for siblings. A fix commit is the highest-quality variant seed
   that exists — the diff itself is the pattern spec.
-- **KNighter** turns a patch into a checker: extract the pre-patch shape from
-  the diff, then sweep for sites that never got it. `seed` is the
-  patch → spec half; `variants` is the checker half (grep-grade, no build).
+- **KNighter** turns a patch into a checker: it synthesized LLVM static
+  analyzers from kernel fix commits and found **30 new CVEs** by sweeping for
+  sites that never got the fix. `seed` is the patch → spec half; `variants`
+  is the one-shot hunt; `synthesize` is the checker half — compile the seed
+  once into a standalone script and every re-scan costs zero tokens.
 - **CopyFail:** one published fix implies unpatched siblings — copied code,
   parallel call sites, drivers forked from the same skeleton. A 9-year-old
   kernel bug was found in ~1 hour of variant analysis off a 2-line prompt.
@@ -27,6 +29,10 @@ still unfixed elsewhere. Python 3.9+, stdlib only (`git` via subprocess).
 fix commit ──seed──> seed.json ──variants──> variants.jsonl ──> human verifies
                 (bug class, sibling terms,     (pre-patch-shape
                  guard shape)                   call sites)
+                     │
+                     └──synthesize──> memory/checkers/<sha>-<class>.py
+                                      (standalone regex checker — rescan any
+                                       repo forever at zero token cost)
 ```
 
 `watch` sits in front as the feed: poll a repo, and every new commit whose
@@ -57,6 +63,12 @@ python3 tools/patch-hunter/patch_hunter.py variants \
 # 3. Poll for new fix commits
 python3 tools/patch-hunter/patch_hunter.py watch manifest.json --fetch \
     --only-host github.com
+
+# 4. KNighter-lite: compile the seed into a reusable checker, rescan free
+python3 tools/patch-hunter/patch_hunter.py synthesize --seed seed.json --lang c
+python3 tools/patch-hunter/patch_hunter.py checkers
+python3 tools/patch-hunter/patch_hunter.py run-checker 9f8d2c1abcde-bounds \
+    --repo /path/to/any/repo
 ```
 
 ### seed.json
@@ -88,6 +100,42 @@ signature — else `guarded-callsite`. Same-file hits (siblings inside a
 patched file) are tagged `candidate: same-file`, others `api-user`. `.git`,
 `node_modules` and binaries are skipped; vendor trees are *not* — copied
 code is where the siblings live.
+
+### synthesized checkers
+
+`variants` answers "where is this bug shape *right now*"; `synthesize`
+bakes the question into a script so re-asking costs nothing. That is the
+KNighter trade in miniature: their LLM-synthesized LLVM checkers turned 30
+patches into 30 new kernel CVEs — here the "compiler" is template rendering
+and the "analyzer" is regex, so the result runs anywhere with zero build
+and zero tokens.
+
+A checker is a standalone Python file in `memory/checkers/` (gitignored,
+`--dir` to override), named `<sha12>-<bug-class>.py`. Contract:
+
+- argv[1] = repo path; stdout is JSONL `{file, line, reason, bug_class,
+  seed}` per candidate site — pipeable, greppable, diffable between runs.
+- Header comment records the bug-class + seed commit for attribution.
+- Two hit kinds, both suppressed when the fix's guard appears within
+  `--window` lines: `call to <term> without guard terms (...)` (the
+  changed_functions / removed-call surface) and `removed pattern still
+  present (unguarded): <line>` (normalized `-` lines matched literally,
+  whitespace-flexed).
+- Regex over text files only. No model calls, no git, no network — cheap
+  enough to run on every checkout, vendor drop, or candidate sibling repo.
+
+**Validation bar** (a rejected checker is never installed): before writing
+the file, `synthesize` self-tests it against fixtures reconstructed from
+the seed's own hunks — context+removed lines (pre-patch) must produce >=1
+hit, a benign control file must produce 0 hits (a checker that matches
+everything is too loose), and context+added (post-patch) hits are reported
+as a warning. The true KNighter bar is ">=1 hit on the parent tree, 0 on
+the fix commit"; the hunk fixtures are the closest analog without a real
+repo — see the `TODO(knighter-validation)` in `patch_hunter.py`.
+
+`checkers` lists what's installed (id, bug-class, seed). `run-checker <id>
+--repo <path>` executes one — JSONL on stdout, summary on stderr, `--out`
+for a file.
 
 ### watch manifest.json
 

@@ -7,7 +7,8 @@ atomic hunting tools. Wrap, never reinvent.
                                           [--allow-unmanifested]
 
 Exit codes: 0..n = wrapped tool's own code; 2 = usage/unmanifested refusal;
-3 = scope or budget refusal; 127 = unknown tool or binary not on PATH.
+3 = scope or budget refusal; 4 = session-auth refusal (broker declined to
+stamp — never run unauthenticated); 127 = unknown tool or binary missing.
 """
 import argparse
 import ipaddress
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 
 # Per tool: json = flag that makes it emit JSON/JSONL on stdout,
 # rate = flag enforcing a req/sec cap, rate_ms = flag enforcing a
@@ -272,6 +274,144 @@ def die(code, msg):
     return code
 
 
+# --- session injection -------------------------------------------------
+# The manifest's `session:` field names a broker program; wrap is the
+# egress point that stamps auth. The token exists only inside the child
+# process argv — we scrub it out of everything we re-emit (tool stdout
+# records, outfile parses, child stderr, our own errors).
+BROKER = os.environ.get("T2D_BROKER") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir,
+    "session-broker", "broker.py")
+MASK = "[session]"
+
+# Fields in tool JSON output that can carry an HTTP status or a redirect
+# target — scanned per line so a dead session feeds broker expire-check.
+STATUS_KEYS = {"status", "status_code", "statuscode"}
+LOCATION_KEYS = {"location", "redirect", "redirect_url"}
+AUTH_STATUS_RE = re.compile(
+    r'"(?:status(?:_code)?|statusCode)"\s*:\s*"?(\d{3})'
+    r"|\[(\d{3})\]|\bStatus:\s*(\d{3})", re.I)
+LOGIN_HINT_RE = re.compile(
+    r"(?i)(login|signin|sign-in|log-?in|sso|oauth|session/new)")
+
+
+def broker_call(prog, slot, *verb):
+    """One broker invocation. Its stdout may carry token material — the
+    caller consumes it into argv or a verdict line, never re-emits it."""
+    cmd = [sys.executable, BROKER] + list(verb) + \
+        ["--program", prog, "--account", slot]
+    return subprocess.run(cmd, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL)
+
+
+def inject_args(prog, slot, tool):
+    """Ask the broker for this tool's stamped-auth argv fragment (a JSON
+    list). None = refused — expired, parked, or a tool that cannot carry
+    the session; the caller then fails closed."""
+    p = broker_call(prog, slot, "inject", "--tool", tool)
+    if p.returncode != 0:
+        warn("broker inject refused for %r [%s]: %s"
+             % (prog, slot, (p.stderr or p.stdout).strip() or "unknown"))
+        return None
+    try:
+        frag = json.loads(p.stdout)
+    except ValueError:
+        frag = None
+    if not (isinstance(frag, list)
+            and all(isinstance(x, str) for x in frag)):
+        warn("broker inject returned a malformed fragment")
+        return None
+    return frag
+
+
+def frag_secrets(frag):
+    """The token material inside an inject fragment, for scrubbing:
+    'Name: value' elements contribute their value; any bare non-flag
+    element counts whole."""
+    out = []
+    for el in frag:
+        if el.startswith("-"):
+            continue
+        val = el.split(":", 1)[1].strip() if ":" in el else el.strip()
+        if val:
+            out.append(val)
+            # mask the bare credential too — a tool may echo the token
+            # without its 'Bearer '/'Basic ' scheme prefix
+            scheme, _, rest = val.partition(" ")
+            if rest and scheme.lower() in ("bearer", "basic"):
+                out.append(rest)
+    return out
+
+
+def make_scrub(secrets):
+    secs = sorted(set(secrets), key=len, reverse=True)
+
+    def scrub(s):
+        for sec in secs:
+            if sec:
+                s = s.replace(sec, MASK)
+        return s
+    return scrub
+
+
+def pump_err(stream, scrub):
+    """Child stderr -> our stderr, token-masked. Only used when a session
+    is active; otherwise stderr stays untouched."""
+    for raw in stream:
+        try:
+            sys.stderr.write(scrub(raw))
+            sys.stderr.flush()
+        except (OSError, ValueError):
+            break
+
+
+def _walk_values(obj, keys):
+    """Yield values found under any of `keys` (case-insensitive) in a
+    nested JSON structure."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k).lower() in keys:
+                yield v
+            for x in _walk_values(v, keys):
+                yield x
+    elif isinstance(obj, list):
+        for v in obj:
+            for x in _walk_values(v, keys):
+                yield x
+
+
+def authfail_in_line(line):
+    """(status, location|None) if a tool output line shows a dead session
+    — 401/403 anywhere, or a 3xx whose Location looks like a login page.
+    Parsed JSON fields first (httpx status_code/location, ffuf
+    results[].status, nuclei status_code); raw-text fallbacks cover
+    console formats (httpx '[401]', ffuf 'Status: 403')."""
+    statuses, locs = [], []
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        obj = None
+    if isinstance(obj, (dict, list)):
+        for v in _walk_values(obj, STATUS_KEYS):
+            try:
+                statuses.append(int(v))
+            except (TypeError, ValueError):
+                pass
+        locs = [str(v) for v in _walk_values(obj, LOCATION_KEYS)]
+    else:
+        for m in AUTH_STATUS_RE.finditer(line):
+            statuses += [int(g) for g in m.groups() if g]
+    for s in statuses:
+        if s in (401, 403):
+            return (s, None)
+    for s in statuses:
+        if s in (301, 302, 303, 307, 308):
+            for loc in locs:
+                if LOGIN_HINT_RE.search(loc):
+                    return (s, loc)
+    return None
+
+
 def host_of(tok):
     """Return the hostname/IP a token points at, else None."""
     tok = tok.strip()
@@ -291,9 +431,12 @@ def host_of(tok):
 
 
 def parse_manifest(path):
-    """Pull the three sections the wrapper enforces out of roe-manifest.md
-    (schema: skills/scope-parser/SKILL.md)."""
+    """Pull the sections the wrapper enforces out of roe-manifest.md
+    (schema: skills/scope-parser/SKILL.md): authorized_assets,
+    hard_denylist, rate_limits, and the optional identity session
+    fields."""
     auth, deny, rps = [], [], None
+    sess, slot = None, None
     sec = None
     with open(path, encoding="utf-8") as f:
         for raw in f:
@@ -303,6 +446,15 @@ def parse_manifest(path):
                 continue
             if line.startswith("#"):
                 continue
+            if sec == "identity":
+                # session/session_slot name the broker profile (and IDOR
+                # slot) whose auth the egress layer stamps per request
+                m = re.match(r'session_slot:\s*"?([^"\s]+)"?', line)
+                if m:
+                    slot = m.group(1).lower()
+                m = re.match(r'session:\s*"?([^"\s]+)"?', line)
+                if m:
+                    sess = m.group(1)
             if sec == "authorized_assets" and line.startswith("- "):
                 m = (re.search(r'asset:\s*"([^"]+)"', line)
                      or re.search(r'asset:\s*(\S+)', line)
@@ -330,7 +482,8 @@ def parse_manifest(path):
                 m = re.match(r'rps_cap:\s*(\d+)', line)
                 if m:
                     rps = int(m.group(1))
-    return {"authorized": auth, "denied": deny, "rps_cap": rps}
+    return {"authorized": auth, "denied": deny, "rps_cap": rps,
+            "session": sess, "session_slot": slot}
 
 
 def matchable(pat):
@@ -473,7 +626,7 @@ def emit(tool, line, wrap_all, parser=None):
         print(json.dumps({"tool": tool, "line": line}) if wrap_all else line)
 
 
-def emit_outfile(tool, path):
+def emit_outfile(tool, path, scrub=None):
     """Parse the tool's JSON output file into normalized records."""
     parser = FILE_PARSERS.get(tool)
     if parser is None:
@@ -484,6 +637,8 @@ def emit_outfile(tool, path):
     except OSError as e:
         warn("cannot read %s output file %s: %s" % (tool, path, e))
         return []
+    if scrub:
+        text = scrub(text)
     recs = parser(text)
     if not recs:
         warn("%s wrote no parseable results to %s" % (tool, path))
@@ -527,6 +682,14 @@ def main(argv):
         sys.stderr.write(NO_MANIFEST % tool)
         if not wa.allow_unmanifested:
             return 2
+
+    session_prog = session_slot = None
+    if manifest and manifest.get("session"):
+        session_prog = manifest["session"]
+        session_slot = manifest.get("session_slot") or "a"
+        if session_slot not in ("a", "b"):
+            return die(3, "manifest session_slot %r must be 'a' or 'b'"
+                       % manifest["session_slot"])
 
     # Piped stdin is target input for several of these tools (httpx, dnsx);
     # it must be scope-checked too, then replayed to the child.
@@ -587,6 +750,19 @@ def main(argv):
         elif not tdef.get("rate") and not tdef.get("rate_ms"):
             warn("%s has no rate-limit flag; cap %s not enforced" % (tool, rate))
 
+    scrub = None
+    if session_prog:
+        # egress stamping: the broker decides this tool's header shape and
+        # hands back the argv fragment — token lives in the child argv
+        # only. Any refusal (expired/parked/uncarriable tool) fails closed:
+        # never run a session-scoped tool unauthenticated.
+        frag = inject_args(session_prog, session_slot, tool)
+        if frag is None:
+            return die(4, "no session stamp for %r — refusing to run %s "
+                          "unauthenticated" % (session_prog, tool))
+        final += frag
+        scrub = make_scrub(frag_secrets(frag))
+
     ofile = None
     ospec = tdef.get("outfile")
     if ospec and not any(a.split("=")[0] in ospec["skip"] for a in tool_args):
@@ -603,13 +779,37 @@ def main(argv):
             tmp.seek(0)
             stdin = tmp
         proc = subprocess.Popen(final, stdin=stdin, stdout=subprocess.PIPE,
+                                stderr=(subprocess.PIPE if scrub else None),
                                 universal_newlines=True, errors="replace")
+        err_thread = None
+        if scrub:
+            err_thread = threading.Thread(target=pump_err,
+                                          args=(proc.stderr, scrub),
+                                          daemon=True)
+            err_thread.start()
         parser = LINE_PARSERS.get(tool)
+        auth_fail = None
         for raw in proc.stdout:
-            emit(tool, raw.rstrip("\n"), wa.json, parser)
+            line = raw.rstrip("\n")
+            if session_prog and auth_fail is None:
+                auth_fail = authfail_in_line(line)
+            emit(tool, scrub(line) if scrub else line, wa.json, parser)
         rc = proc.wait()
+        if err_thread:
+            err_thread.join(timeout=2)
+        if session_prog and auth_fail:
+            # the run saw a dead-session signal — feed the status line to
+            # the broker; its circuit breaker parks on persistent failure
+            verb = ["expire-check", "--status", str(auth_fail[0])]
+            if auth_fail[1]:
+                verb += ["--location", auth_fail[1]]
+            p = broker_call(session_prog, session_slot, *verb)
+            warn("session %r: %s"
+                 % (session_prog,
+                    (p.stdout or p.stderr).strip()
+                    or "expire-check rc=%d" % p.returncode))
         if ofile:
-            for rec in emit_outfile(tool, ofile):
+            for rec in emit_outfile(tool, ofile, scrub):
                 print(json.dumps({"tool": tool, "record": rec},
                                  sort_keys=True))
         return rc

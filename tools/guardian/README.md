@@ -117,13 +117,63 @@ Adjudicate before dispatch, never instead of it:
 1. **Before `wrap.py`** — build the action object from the intended call,
    run guardian, dispatch only on `allow` (exit 0); `escalate` (2) goes to
    a human, `deny` (3) stops the run.
-2. **Inside the mcp-server tool path** — insert the same check in
-   `run_tool` (`tools/mcp-server.py`) ahead of `subprocess.run`, so every
-   `tools/call` is adjudicated with the manifest of the engaged program.
+2. **Inside the mcp-server tool path** — wired: `run_tool`
+   (`tools/mcp-server.py`) adjudicates every `tools/call` ahead of
+   `subprocess.run` with the manifest of the engaged program.
 
 Guardian judges the action object; wrap still enforces scope on the real
 command line — the two layers disagree only when one of them is being
 bypassed, which is the point.
+
+### MCP dispatch path
+
+`mcp-server.py` loads `guardian.py` in-process (the same importlib
+pattern guardian uses for `wrap.py`) and builds a `shell` action from
+the *logical* argv of each call: for `wrap` that is the wrapped binary
+plus its `tool_args` and piped `stdin` target lines; for every other
+tool it is the tool name plus its flags. Local path operands (`log`,
+`sidecar`, `out_dir`, `file`) and the python-interpreter/script
+plumbing stay out of the action — they are repo files, not targets.
+
+Manifest resolution follows the path wrap.py's `--manifest` takes: an
+explicit `manifest` argument wins, then `T2D_MANIFEST`, then a single
+engaged program discovered at `memory/targets/<program>/roe-manifest.*`
+(zero or several is unresolvable). `.md` manifests parse through
+`wrap.parse_manifest`, unchanged.
+
+Verdict semantics at the dispatch boundary:
+
+| verdict | tool result | executed? |
+|---|---|---|
+| `allow` | normal tool output | yes |
+| `escalate` | `{"status":"escalated","hold":<action_sha256>,"rule","reason"}` | no — pending approval |
+| `deny` | `{"status":"denied","rule","class","reason"}` | no |
+
+`class` names the Harmless Mode class when the deny came from one
+(`payload_*` rules report the inner class), else null. `hold` is the
+canonical action digest — the same `action_sha256` the decision log
+stores — so an escalation's hold names its audit entry.
+
+Fail closed: a missing/unloadable guardian, a crashed adjudicator, or an
+unresolvable manifest is an `escalate` (`guardian_unavailable`,
+`guardian_error`, `manifest_unresolved`), never an `allow`; guardian's
+own fail-closed denies (`scope_engine_unavailable`,
+`manifest_unreadable`) pass through. Every verdict, allowed or not, is
+appended to the decision chain via `record_decision` (default
+`memory/audit.jsonl` under `T2D_ROOT`).
+
+Example flow:
+
+```
+tools/call wrap {tool:"httpx", tool_args:["-u","https://api.example.com"],
+                 manifest:"memory/targets/acme/roe-manifest.md"}
+  -> action {"type":"shell","argv":["httpx","-u","https://api.example.com"]}
+  -> allow [in_scope_argv]          -> subprocess runs wrap.py
+tools/call wrap {tool:"hydra"}
+  -> deny [brute_force]             -> {"status":"denied","class":"brute_force",...}
+tools/call ledger {}                (no manifest anywhere)
+  -> escalate [manifest_unresolved] -> {"status":"escalated","hold":"sha256:...",...}
+```
 
 ## Examples
 
