@@ -42,6 +42,29 @@ A proven finding triggers stop-on-proof for that weakness; the hunt continues on
 6. **Apply the FP rules before claiming.** Every playbook ends with an FP-rule refinement stating what does NOT count: introspection visibility is not a vulnerability, a rendered CAPTCHA widget is not enforcement, a signed assertion replayed is not a finding until a session is issued, two 200s are not two committed operations. The general rules and the ten-gate process are in `references/verification.md`.
 7. **Report through the triage gate.** Harm gate first, then the seven report-quality questions — run via `../reporter`. Separate demonstrated impact from plausible chains in writing; argue severity from what the victim loses, never the sum of component severities. Submission is always a human decision.
 
+## Dispatch order — impact-first, knowledge-driven retargeting
+
+Two standing rules from live triage feedback (Across ack, Nov 2026:
+"issues reported as LOW severity often do not meet the impact
+standard"; actively-used-in-production required):
+
+1. **Impact-first dispatch.** The first audit slice on any target goes
+   to the highest-impact surface, not the easiest: fund-moving paths,
+   signature/auth schemes, reward/accounting math, bridge/message
+   handlers — never recon-by-convenience. Lower-tier surfaces
+   (informational leaks, correctness bugs, hardening gaps) get slices
+   only after the top tier is covered. A Low-severity bundle is the
+   fallback yield, not the objective.
+2. **Retarget on accumulated knowledge.** Every notes-<slice>.md file
+   is a targeting input, not just output: after each slice lands, the
+   orchestrator re-reads coverage + ruled-out tables and re-aims the
+   next dispatch at where the evidence concentrates (fresh commits,
+   just-patched code — siblings of recent fixes are goldmine ground;
+   asymmetric trust boundaries; one component verified-weak elsewhere
+   in the stack). Depth beats breadth — the goldmine is found by
+   iterating on the same surface with better knowledge, not by
+   spraying new surfaces.
+
 ## Target-yield scoring (program selection, Nov 2026)
 
 Rank candidate programs before allocating compute — five signals:
