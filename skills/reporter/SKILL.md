@@ -407,6 +407,14 @@ for these before drafting the artifact:
   with **no attachments, no external links — auto-rejected**. The entire
   report body + PoC must be inline plain text. Manifest `contact` block
   carries the format flag.
+- **Email-channel reports are STRICT ASCII plaintext — zero markdown
+  syntax.** No `##`/`#` headers (use `N. Title` or `SECTION NAME:`), no
+  `**bold**`, no ``` fences (paste code/log output as bare lines), no
+  backticks (identifiers stay bare), no `—`/`–`/`‖`/`→` unicode
+  (use `-`, `||`, `->`). The file must be truly copy-paste: line 1
+  `To:`, line 2 `Subject:`, then the body — no placeholders, no
+  signature block, no internal notes. Verify with a residue grep
+  (`[`*#—‖`]`) before presenting.
 - **Version-pinned scope (Safe-style):** scope lists exact contract/module
   versions — a bug already fixed in a newer released version is excluded.
   Check the deployed/released version against the pinned list before
