@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import hashlib
 import ipaddress
 import json
 import logging
+import math
 import re
 import socket
 import subprocess
@@ -65,7 +67,9 @@ def payout(v, currency="USD"):
         v = float(v)
     except (TypeError, ValueError):
         return None
-    if v <= 0:
+    # nan/inf compare False against <= 0 and crash int() — one poisoned
+    # max_bounty value must not kill the source's whole record set
+    if not math.isfinite(v) or v <= 0:
         return None
     return {"value": int(v) if v == int(v) else v, "currency": currency}
 
@@ -152,7 +156,7 @@ def norm_lissy93(platform, data, ts, source):
             continue
         r = base(platform, source, ts)
         r["name"] = (p.get("company") or p.get("name") or "").strip() or None
-        r["handle"] = p.get("slug")
+        r["handle"] = str(p["slug"]) if p.get("slug") else None
         r["url"] = p.get("url")
         r["max_payout"] = payout(p.get("max_payout"), p.get("currency") or "USD")
         r["safe_harbor"] = sh_bool(p.get("safe_harbor"))
@@ -265,6 +269,8 @@ def validate_community_entry(p, idx=None):
     name = (p.get("name") or "").strip() if isinstance(p.get("name"), str) else ""
     if not name:
         errs.append("%s: name required" % tag)
+    if p.get("handle") is not None and not isinstance(p.get("handle"), str):
+        errs.append("%s: handle must be a string" % tag)
     url = p.get("url")
     if not (isinstance(url, str)
             and url.startswith(("https://", "http://"))):
@@ -349,10 +355,16 @@ def fetch_json(url, timeout):
 
 
 def dedupe_key(r):
-    ident = (r.get("handle") or r.get("name") or "").strip().lower()
+    # handle/name/url arrive from untrusted feeds — coerce, don't crash on
+    # a non-string; identity-less rows fall back to a content hash so the
+    # key stays deterministic and mergeable across runs (id(r) rekeys)
+    ident = str(r.get("handle") or r.get("name") or "").strip().lower()
     if not ident:
-        ident = (r.get("url") or "").strip().lower().rstrip("/")
-    return (r.get("platform"), ident or id(r))
+        ident = str(r.get("url") or "").strip().lower().rstrip("/")
+    if not ident:
+        ident = "sha256:" + hashlib.sha256(
+            json.dumps(r, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    return (r.get("platform"), ident)
 
 
 def merge(a, b):
@@ -745,6 +757,17 @@ def main():
                         (r.stderr or r.stdout).strip())
         else:
             log.info("content-scan: %s", r.stdout.strip())
+            # hostile rows moved to .quarantine.jsonl after index.json was
+            # written — recount so total_programs matches the file
+            try:
+                kept = json.loads((out_dir / "programs.json").read_text())
+                if isinstance(kept, list) \
+                        and len(kept) != index["total_programs"]:
+                    index["total_programs"] = len(kept)
+                    (out_dir / "index.json").write_text(
+                        json.dumps(index, indent=2) + "\n")
+            except Exception as e:
+                log.warning("post-flag recount failed: %s", e)
     except Exception as e:
         log.warning("content-scan flagging failed: %s", e)
     return 0

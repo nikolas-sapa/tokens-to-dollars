@@ -110,14 +110,19 @@ def main():
         oc_tech[t][o] += 1
 
     paid_prog = defaultdict(float)
-    latest = {}
+    latest, amounts = {}, {}
     for r in payouts:
         fid = r.get("finding-id") or "?"
         status = (r.get("status") or "").strip().lower()
         latest[fid] = (r.get("program") or "?", status)
+        amt, _ = money(r.get("amount"))
+        if amt is not None:
+            amounts[fid] = amt
+    # the ledger is append-only: a paid row later corrected to
+    # duplicate/unpaid must not still count — only latest-status paid sums
+    for fid, (prog, status) in latest.items():
         if status == "paid":
-            amt, _ = money(r.get("amount"))
-            paid_prog[r.get("program") or "?"] += amt or 0.0
+            paid_prog[prog] += amounts.get(fid) or 0.0
     total_paid = sum(paid_prog.values())
     pipeline = [{"finding_id": f, "program": p, "status": s}
                 for f, (p, s) in sorted(latest.items()) if s in OPEN_STATUSES]

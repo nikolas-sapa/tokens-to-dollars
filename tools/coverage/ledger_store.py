@@ -116,7 +116,10 @@ def do_heartbeat(conn, a):
     if not st["open"]:
         conn.execute("ROLLBACK")
         sys.exit("error: no open claim on %s — nothing to heartbeat" % a.surface)
-    worker = a.worker or st["holder"]
+    # no --worker means "the current caller", never the holder — otherwise
+    # the fencing check below can never fire and anyone can heartbeat
+    # someone else's claim under their name
+    worker = a.worker or default_worker()
     if worker != st["holder"]:
         conn.execute("ROLLBACK")
         sys.exit("error: %s does not hold %s (holder: %s) — fenced workers cannot write"
@@ -132,7 +135,7 @@ def do_release(conn, a):
     if not st["open"]:
         conn.execute("ROLLBACK")
         sys.exit("error: no open claim on %s — exactly-once settle refuses a second RELEASE" % a.surface)
-    worker = a.worker or st["holder"]
+    worker = a.worker or default_worker()  # caller identity, like claim/steal
     if worker != st["holder"]:
         conn.execute("ROLLBACK")
         sys.exit("error: %s does not hold %s (holder: %s) — fenced workers cannot write"

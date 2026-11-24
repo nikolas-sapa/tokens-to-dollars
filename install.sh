@@ -3,6 +3,9 @@
 #
 #   ./install.sh                  install all skills into every detected harness
 #   ./install.sh --only claude    install into one harness only
+#   ./install.sh --dest DIR ...   install into explicit skills dir(s) —
+#                                 repeatable; used by the setup wizard so a
+#                                 subset pick installs exactly those dirs
 #   ./install.sh --list           show harnesses, target dirs, detected status
 #   ./install.sh --dry-run        print what would happen, change nothing
 #
@@ -34,6 +37,7 @@ TARGETS=(
 HARNESSES="claude codex cursor gemini devin windsurf kiro opencode factory amp"
 
 ONLY=""
+DESTS=()
 DRY=0
 LIST=0
 while [ $# -gt 0 ]; do
@@ -41,10 +45,13 @@ while [ $# -gt 0 ]; do
     --only)
       ONLY="${2:?--only needs a harness name ($HARNESSES)}"
       shift 2 ;;
+    --dest)
+      DESTS+=("${2:?--dest needs a skills dir}")
+      shift 2 ;;
     --list)    LIST=1; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
-    *) echo "unknown flag '$1' (want: --only <harness> | --list | --dry-run)" >&2; exit 2 ;;
+    *) echo "unknown flag '$1' (want: --only <harness> | --dest <dir> | --list | --dry-run)" >&2; exit 2 ;;
   esac
 done
 
@@ -112,16 +119,26 @@ install_into() {
 
 matched=0
 seen="|"
-for row in "${TARGETS[@]}"; do
-  IFS='|' read -r name detect dest <<< "$row"
-  [ -n "$ONLY" ] && [ "$name" != "$ONLY" ] && continue
+if [ ${#DESTS[@]} -gt 0 ]; then
+  # explicit dirs (wizard picks): no detection gate — the caller chose them
   matched=1
-  # dedupe rows that resolve to the same skills dir (e.g. run from $HOME)
-  case "$seen" in *"|$dest|"*) continue ;; esac
-  [ -d "$detect" ] || { echo "skip: $name not detected ($detect missing)"; continue; }
-  seen="$seen$dest|"
-  install_into "$dest" "$name"
-done
+  for dest in "${DESTS[@]}"; do
+    case "$seen" in *"|$dest|"*) continue ;; esac
+    seen="$seen$dest|"
+    install_into "$dest" "dest"
+  done
+else
+  for row in "${TARGETS[@]}"; do
+    IFS='|' read -r name detect dest <<< "$row"
+    [ -n "$ONLY" ] && [ "$name" != "$ONLY" ] && continue
+    matched=1
+    # dedupe rows that resolve to the same skills dir (e.g. run from $HOME)
+    case "$seen" in *"|$dest|"*) continue ;; esac
+    [ -d "$detect" ] || { echo "skip: $name not detected ($detect missing)"; continue; }
+    seen="$seen$dest|"
+    install_into "$dest" "$name"
+  done
+fi
 
 if [ "$matched" = 0 ]; then
   echo "unreachable: --only validation should have caught this" >&2; exit 2

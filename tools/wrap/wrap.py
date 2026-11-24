@@ -310,6 +310,12 @@ LOCATION_KEYS = {"location", "redirect", "redirect_url"}
 AUTH_STATUS_RE = re.compile(
     r'"(?:status(?:_code)?|statusCode)"\s*:\s*"?(\d{3})'
     r"|\[(\d{3})\]|\bStatus:\s*(\d{3})", re.I)
+# Console-format redirect targets on the same line: a "Location:" header
+# field (ffuf rows) or the URL a bracketed status prints next to (httpx
+# "[302] https://x/login") — without these, non-JSON output collects a
+# status but never a location, so the login-redirect arm can't fire.
+AUTH_LOC_RE = re.compile(
+    r"(?i)\blocation:\s*(\S+)|\[\d{3}\]\s*(\S+)")
 LOGIN_HINT_RE = re.compile(
     r"(?i)(login|signin|sign-in|log-?in|sso|oauth|session/new)")
 
@@ -420,6 +426,8 @@ def authfail_in_line(line):
     else:
         for m in AUTH_STATUS_RE.finditer(line):
             statuses += [int(g) for g in m.groups() if g]
+        for m in AUTH_LOC_RE.finditer(line):
+            locs += [g for g in m.groups() if g]
     for s in statuses:
         if s in (401, 403):
             return (s, None)

@@ -4,7 +4,8 @@
 //   npx tokens-to-dollars            interactive setup wizard (default)
 //   t2d setup                        same
 //   t2d list                         show detected agent harnesses + skill dirs
-//   t2d install [--only h|--dry-run] copy skills into harness dirs (bash path)
+//   t2d install [--only h|--dest dir|--dry-run]
+//                                  copy skills into harness dirs (bash path)
 //   t2d run <tool> [args...]         run a repo tool, e.g.
 //                                    t2d run ingest-scope/ingest_scope.py --out-dir out
 //                                    t2d run bounty-radar/bounty_radar.py --rank-programs cat.json
@@ -72,7 +73,11 @@ function listHarnesses() {
 function installSh(args) {
   const sh = path.join(ROOT, "install.sh");
   const r = spawnSync("bash", [sh, ...args], { stdio: "inherit" });
-  return r.status === null ? 1 : r.status;
+  if (r.status === null) {
+    console.error(`install.sh failed to start: ${r.error ? r.error.message : "unknown spawn error"}`);
+    return 1;
+  }
+  return r.status;
 }
 
 function copySkill(src, destDir) {
@@ -245,11 +250,16 @@ async function wizard() {
   const prevA = (prev.analytics && typeof prev.analytics === "object")
     ? prev.analytics : {};
   const cfg = {
+    ...prev,
     pkg_root: ROOT,
     installed_to: destDirs,
-    env: {},
+    // a re-run only overlays what this run typed; blank answers keep the
+    // stored keys/choices rather than wiping them
+    env: { ...((prev.env && typeof prev.env === "object") ? prev.env : {}) },
     analytics: {
-      enabled: /^y/i.test(analyticsAns),
+      ...prevA,
+      enabled: analyticsAns ? /^y/i.test(analyticsAns)
+                            : prevA.enabled === true,
       endpoint: typeof prevA.endpoint === "string" ? prevA.endpoint : "",
       install_id: typeof prevA.install_id === "string" && prevA.install_id
         ? prevA.install_id : crypto.randomUUID(),
@@ -267,14 +277,14 @@ async function wizard() {
   if (process.platform === "win32" || !fs.existsSync("/bin/bash") && !process.env.SHELL) {
     nodeInstall(destDirs);
   } else {
-    // install.sh handles trash-safe replacement + dedupe; run per unique harness
+    // install.sh handles trash-safe replacement + dedupe; pass the picked
+    // dirs verbatim so a subset (multi-select, or one of a harness's two
+    // rows) installs exactly those dirs and no more
     const harnesses = [...new Set(destDirs.map(d =>
       (TARGETS.find(([, , t]) => t === d) || ["custom"])[0]))];
-    const args = harnesses.length === 1 && harnesses[0] !== "custom"
-      ? ["--only", harnesses[0]] : [];
     let rc = 0;
     if (harnesses.every(h => h !== "custom")) {
-      rc = installSh(args.length ? args : []);
+      rc = installSh(destDirs.flatMap(d => ["--dest", d]));
     } else {
       nodeInstall(destDirs);
     }
@@ -326,7 +336,12 @@ function run(args) {
     if (envKeyAllowed(k, allow)) env[k] = v;
   }
   const r = spawnSync("python3", [p, ...args], { stdio: "inherit", env });
-  process.exitCode = r.status === null ? 1 : r.status;
+  if (r.status === null) {
+    console.error(`failed to start python3: ${r.error ? r.error.message : "unknown spawn error"}`);
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = r.status;
 }
 
 const [cmd, ...rest] = process.argv.slice(2);

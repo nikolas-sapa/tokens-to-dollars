@@ -34,23 +34,42 @@ def trash(path: Path, dry: bool) -> bool:
         return True
     for cmd in (["trash"], ["/usr/bin/trash"]):
         if shutil.which(cmd[0]) or Path(cmd[0]).exists():
-            subprocess.run(cmd + [str(path)], check=False)
-            print("trashed  %s" % path)
-            return True
+            r = subprocess.run(cmd + [str(path)], check=False)
+            if r.returncode == 0:
+                print("trashed  %s" % path)
+                return True
+            print("WARN trash rc=%d on %s — left in place"
+                  % (r.returncode, path), file=sys.stderr)
+            return False
     print("WARN no trash binary; left %s (delete manually)" % path, file=sys.stderr)
     return False
+
+
+def name_hit(name: str, prog: str) -> bool:
+    """Exact-name match: prog 'acme' hits 'acme', 'acme.md', and dated
+    graph-archive rows 'YYYY-MM-DD-acme.*' — never 'acme-corp'/'acme2'.
+    ('-' is a program-name char, so only a full tail segment matches.)"""
+    stem = Path(name).stem
+    if stem == prog:
+        return True
+    m = re.match(r"^\d{4}-\d{2}-\d{2}-(.+)$", stem)
+    return bool(m and m.group(1) == prog)
 
 
 def mask_line(path: Path, program: str, dry: bool) -> bool:
     if not path.exists():
         return False
     txt = path.read_text()
-    if program not in txt:
+    # word-boundary on the program charset: masking 'acme' must not also
+    # rewrite the 'acme' inside a neighbor program's 'acme-corp' rows
+    pat = re.compile(r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])"
+                     % re.escape(program))
+    if not pat.search(txt):
         return False
     if dry:
         print("dry-run  mask %s" % path)
         return True
-    path.write_text(txt.replace(program, "<purged>"))
+    path.write_text(pat.sub("<purged>", txt))
     print("masked   %s (kept for accounting)" % path)
     return True
 
@@ -94,9 +113,11 @@ def main() -> int:
     trashed = []
     victims = {target, root / "reports" / prog}
     if (root / "reports").exists():
-        victims |= set((root / "reports").glob(prog + "*"))
+        victims |= {p for p in (root / "reports").iterdir()
+                    if name_hit(p.name, prog)}
     if (root / "memory" / "graph-archive").exists():
-        victims |= set((root / "memory" / "graph-archive").glob("*" + prog + "*"))
+        victims |= {p for p in (root / "memory" / "graph-archive").iterdir()
+                    if name_hit(p.name, prog)}
     for p in victims:
         if trash(p, args.dry_run):
             trashed.append(str(p))

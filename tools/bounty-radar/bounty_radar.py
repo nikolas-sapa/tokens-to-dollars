@@ -665,6 +665,10 @@ def dedupe_and_flag(drafts):
             merge_fields(keep, lose)
             merged[idx] = keep
             merged_from[id(keep)] = srcs
+            # title/project-merged drafts never got an exact-url entry —
+            # register the incoming url too (and repoint it after a
+            # richness swap) or a later draft with this url misses the slot
+            url_idx[u] = idx
     for i, m in enumerate(merged):
         srcs = merged_from.get(id(m), {m["source"]})
         if len(srcs) > 1:

@@ -1044,7 +1044,12 @@ def source_patchdb(timeout):
             raise RuntimeError("patchdb query returned 0 method rows in %s"
                                % PATCHDB_PATH)
         out = []
-        for (cve_id, commit, fname, mname), d in sorted(pairs.items()):
+        # cve_id comes off a LEFT JOIN and commit/fname/mname can be NULL —
+        # sort on coerced strings, never bare (None, str) tuple comparisons
+        for (cve_id, commit, fname, mname), d in sorted(
+                pairs.items(),
+                key=lambda kv: tuple(str(x) if x is not None else ""
+                                     for x in kv[0])):
             if not (d.get("vuln") and d.get("patch")):
                 continue  # only emit complete vuln+patch pairs
             url = None
@@ -1259,6 +1264,16 @@ def main():
                         (r.stderr or r.stdout).strip())
         else:
             log.info("content-scan: %s", r.stdout.strip())
+            # hostile rows moved to .quarantine.jsonl after the index was
+            # written — recount so n_records/total_records match the file
+            try:
+                kept = load_prev(records_path)
+                for e in index["sources"]:
+                    e["n_records"] = len(kept.get(e.get("source"), []))
+                index["total_records"] = sum(len(v) for v in kept.values())
+                index_path.write_text(json.dumps(index, indent=2) + "\n")
+            except Exception as e:
+                log.warning("post-flag recount failed: %s", e)
     except Exception as e:
         log.warning("content-scan flagging failed: %s", e)
     return 0
