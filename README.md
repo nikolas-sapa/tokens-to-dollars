@@ -106,6 +106,7 @@ t2d list                       # detected harnesses + skill dirs
 t2d install --only claude      # install into one harness
 t2d run ingest-scope/ingest_scope.py --out-dir out/scope
 t2d run bounty-radar/bounty_radar.py --rank-programs out/scope/programs.json --out-dir out/radar
+t2d analytics status           # opt-in usage analytics, off by default (docs/privacy.md)
 ```
 
 **From a git clone:**
@@ -160,7 +161,8 @@ Read `docs/responsible-use.md` before pointing this at anything. Authorization
 gates are load-bearing — removing them makes the tool worse, not freer.
 `docs/threat-model.md` explains why they exist.
 `docs/terms-of-use.md` (authorized testing only) and `docs/privacy.md`
-(no telemetry, keys stay local) apply to all use and contributions.
+(keys stay local; usage analytics strictly opt-in) apply to all use and
+contributions.
 
 ## License
 
