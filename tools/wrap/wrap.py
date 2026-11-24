@@ -254,7 +254,7 @@ JSONY_FLAGS = {"-json", "-jsonl", "--json", "-oJ", "-j"}
 
 HOST_RE = re.compile(r"(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}")
 IPV4_RE = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
-URL_RE = re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*://)?(?:[^@/\s]*@)?(\[?[a-zA-Z0-9.:_-]+\]?)(?::\d+)?(?:[/?#]|$)")
+URL_RE = re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*://)?(?:[^@/\s]*@)?(\[[a-fA-F0-9:.]+\]|[a-zA-Z0-9._-]+)(?::\d+)?(?:[/?#]|$)")
 
 NO_MANIFEST = """\
 WRAP: NO ROE MANIFEST — %s would run unscoped.
