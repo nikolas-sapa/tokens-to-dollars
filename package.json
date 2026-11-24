@@ -1,0 +1,47 @@
+{
+  "name": "tokens-to-dollars",
+  "version": "0.1.0",
+  "description": "Turn LLM token spend into validated, submission-ready bug bounty reports. Harness-agnostic skill-pack + CLI: playbooks, scope/RoE enforcement, dedupe, evidence gates, bounty-radar.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nikolas-sapa/tokens-to-dollars.git"
+  },
+  "homepage": "https://github.com/nikolas-sapa/tokens-to-dollars",
+  "bugs": "https://github.com/nikolas-sapa/tokens-to-dollars/issues",
+  "keywords": [
+    "bug-bounty",
+    "security",
+    "agent",
+    "llm",
+    "skills",
+    "pentest",
+    "claude",
+    "devin",
+    "codex",
+    "mcp"
+  ],
+  "bin": {
+    "tokens-to-dollars": "bin/tokens-to-dollars.js",
+    "t2d": "bin/tokens-to-dollars.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "tools",
+    "evals",
+    "docs",
+    "install.sh",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "setup": "node bin/tokens-to-dollars.js setup"
+  }
+}

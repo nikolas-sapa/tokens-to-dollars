@@ -84,6 +84,28 @@ found into `memory/ledger.md`.
 
 ## Install
 
+**One command (npm):**
+
+```bash
+npx tokens-to-dollars          # interactive setup wizard
+# or: npm i -g tokens-to-dollars && t2d setup
+```
+
+The wizard asks which agent harnesses get the skills (auto-detected:
+claude, codex, cursor, gemini, devin, windsurf, kiro, opencode, factory,
+amp — or a custom path), takes optional API keys (`GITHUB_TOKEN` for
+bounty-radar extras, `SOLODIT_API_KEY` for the audit corpus), and writes
+them to `~/.config/tokens-to-dollars/config.json` (0600, never committed).
+
+```
+t2d list                       # detected harnesses + skill dirs
+t2d install --only claude      # install into one harness
+t2d run ingest-scope/ingest_scope.py --out-dir out/scope
+t2d run bounty-radar/bounty_radar.py --rank-programs out/scope/programs.json --out-dir out/radar
+```
+
+**From a git clone:**
+
 ```bash
 ./install.sh --list          # which harnesses are detected, and where skills land
 ./install.sh                 # copy all skills/* into every detected harness
