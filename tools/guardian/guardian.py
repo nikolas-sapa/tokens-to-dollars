@@ -432,10 +432,10 @@ def _eq_path(tok):
     return [tok.split("=", 1)[1]] if "=" in tok else [tok]
 
 
-def _fs_targets(argv):
+def _fs_targets(argv, cwd=None):
     """(delete_targets, write_targets): absolute paths an argv removes
-    or writes. Relative paths resolve inside the action cwd; /dev/*
-    writes are plumbing, not file ops."""
+    or writes. Relative paths resolve inside the action cwd (process
+    cwd when unset); /dev/* writes are plumbing, not file ops."""
     dels, writes = [], []
     for i, tok in enumerate(argv):
         base = os.path.basename(tok)
@@ -458,9 +458,15 @@ def _fs_targets(argv):
         elif base in WRITE_OPS:
             writes += ops
     writes += REDIRECT_RE.findall(" ".join(argv))
-    dels = [p for t in dels for p in _eq_path(t) if _abspath(p)]
-    writes = [p for t in writes for p in _eq_path(t)
-              if _abspath(p) and not p.startswith("/dev/")]
+
+    def res(p):
+        if _abspath(p):
+            return p
+        base = cwd if isinstance(cwd, str) and cwd else os.getcwd()
+        return os.path.join(base, p)
+    dels = [res(p) for t in dels for p in _eq_path(t)]
+    writes = [res(p) for t in writes for p in _eq_path(t)]
+    writes = [p for p in writes if not p.startswith("/dev/")]
     return dels, writes
 
 
@@ -583,7 +589,7 @@ def harmless_shell(a, argv, mf):
         checks.append(("brute_force", "deny",
                        "credential-attack tool: %r" % m.group(0).strip()))
 
-    dels, writes = _fs_targets(argv)
+    dels, writes = _fs_targets(argv, a.get("cwd"))
     roots = _ws_roots(a, mf)
     out_d = [p for p in dels if _outside(p, roots)]
     out_w = [p for p in writes if _outside(p, roots)]
