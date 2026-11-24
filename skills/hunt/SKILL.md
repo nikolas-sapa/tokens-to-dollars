@@ -25,7 +25,7 @@ Stages 0–10, one line each; gates and limits come from `../safety-gates`, the 
 - **Stage 4 — Threat modeling.** Name the assets, trust boundaries, ownership, tenant separation, and the security invariants a bug would violate (`references/verification.md`).
 - **Stage 5 — Hypothesis generation.** Map applicable catalogue checks and custom hypotheses to each surface; assign gate, request estimate, and evidence bar per test.
 - **Stage 6 — Controlled testing.** Dispatch intents at or below the authorized gate; minimal requests, sanitized evidence capture, stop the moment the boundary is demonstrated.
-- **Stage 7 — False-positive rejection.** Run the ten-gate verification and the FP rejection rules (`references/verification.md`).
+- **Stage 7 — False-positive rejection.** Run the two-stage funnel, ten-gate verification, and the FP rejection rules (`references/verification.md`); every dead candidate logs a `failure:` class plus reason and leaves a `[DP-n]` disproven record (`../orchestrator` §2).
 - **Stage 8 — Independent reproduction.** A verifier — never the finder — reproduces confirmed candidates with owned test resources (`../evidence`).
 - **Stage 9 — Attack-path analysis.** Correlate confirmed findings into chains; classify every link Demonstrated / Supported but not fully validated / Hypothetical (`references/verification.md`).
 - **Stage 10 — Reporting.** Dedupe via `../dedupe-check`, draft via `../reporter` through the harm gate and the seven report-quality questions; a human submits.

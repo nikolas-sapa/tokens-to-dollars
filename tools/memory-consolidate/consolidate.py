@@ -13,16 +13,20 @@ NODE_RE = re.compile(r"\[([A-Z]{1,4}-\d+)\]")
 Y_RE = re.compile(r"\[Y-\d+\].*?→\s*(?:technique\s*)?\(?([A-Za-z0-9_.\-]+)\)?\s*→\s*outcome:\s*([A-Za-z\-]+)")
 SPENT_RE = re.compile(r"intents spent:\s*(\d+)")
 CTX_RE = re.compile(r"\bctx:\s*([A-Za-z0-9_.\-]+)")
+FAIL_RE = re.compile(r"\bfailure:\s*([a-z_]+)")
 PRIOR_ALPHA, PRIOR_BETA = 0.5, 9.5
 HALF_LIFE_DAYS = 180.0
 LCB90_Z = 1.645
 YIELD_HEAD = """# lessons/technique-yield - yield ledger: (technique, ctx) scored by decayed Beta-Bernoulli posterior
 # Regenerated deterministically by tools/memory-consolidate/consolidate.py from [Y-n] records.
 # LCB90 = posterior mean - 1.645*std, prior Beta(0.5, 9.5), decay half-life 180d. Sorted by LCB90.
+# `failure: <class>` on a [Y-n] line tallies into the failure mix; the dominant mode annotates
+# the brief (missing_precondition says fix setup, false_pattern says the technique lies) but
+# never moves LCB90.
 # Anything under a `## manual notes` heading below survives regeneration.
 
-| technique | ctx | LCB90 | mean | records | finding | fact-only | FP | blocked | intents spent |
-|---|---|---|---|---|---|---|---|---|---|
+| technique | ctx | LCB90 | mean | records | finding | fact-only | FP | blocked | intents spent | dominant failure |
+|---|---|---|---|---|---|---|---|---|---|---|
 """
 OUTCOMES = ("finding", "fact-only", "FP", "blocked")
 
@@ -144,8 +148,11 @@ def contradictions(files):
 
 def yield_table(files, today):
     """Aggregate [Y-n] records per (technique, ctx): outcome counts, intents
-    spent, and decay-weighted hits/trials. A blocked intent never ran the
-    technique, so it counts toward cost but not as a posterior trial."""
+    spent, decay-weighted hits/trials, and the `failure:` mix per class. A
+    blocked intent never ran the technique, so it counts toward cost but not
+    as a posterior trial. The failure mix annotates the brief — a technique
+    dying on missing_precondition wants better setup, not abandonment; one
+    dying on false_pattern under-delivers — and never enters the posterior."""
     agg = {}
     for p in files:
         for ln in p.read_text().splitlines():
@@ -158,6 +165,10 @@ def yield_table(files, today):
             rec["records"] += 1
             outcome = m.group(2)
             rec[outcome] = rec.get(outcome, 0) + 1
+            fm = FAIL_RE.search(ln)
+            if fm:
+                mix = rec.setdefault("failure_mix", {})
+                mix[fm.group(1)] = mix.get(fm.group(1), 0) + 1
             sm = SPENT_RE.search(ln)
             if sm:
                 rec["spent"] += int(sm.group(1))
@@ -178,8 +189,10 @@ def score_rows(agg):
         mean = alpha / (alpha + beta)
         std = math.sqrt(alpha * beta / ((alpha + beta) ** 2 * (alpha + beta + 1)))
         row = dict(a)
+        mix = a.get("failure_mix") or {}
         row.update({"technique": tech, "ctx": ctx,
-                    "mean": mean, "LCB90": mean - LCB90_Z * std})
+                    "mean": mean, "LCB90": mean - LCB90_Z * std,
+                    "dominant_failure": max(mix, key=mix.get) if mix else ""})
         rows.append(row)
     rows.sort(key=lambda r: (-r["LCB90"], r["technique"], r["ctx"]))
     return rows
@@ -188,12 +201,15 @@ def score_rows(agg):
 def render_yield(rows, old_text=None):
     out = [YIELD_HEAD.rstrip("\n")]
     for r in rows:
-        out.append("| %s | %s | %.3f | %.3f | %d | %d | %d | %d | %d | %d |"
+        dom = r.get("dominant_failure") or ""
+        cell = ("%s x%d" % (dom, r.get("failure_mix", {}).get(dom, 0))
+                if dom else "-")
+        out.append("| %s | %s | %.3f | %.3f | %d | %d | %d | %d | %d | %d | %s |"
                    % (r["technique"], r["ctx"], r["LCB90"], r["mean"], r["records"],
                       r.get("finding", 0), r.get("fact-only", 0), r.get("FP", 0),
-                      r.get("blocked", 0), r["spent"]))
+                      r.get("blocked", 0), r["spent"], cell))
     if not rows:
-        out.append("| — | - | - | - | 0 | 0 | 0 | 0 | 0 | 0 |")
+        out.append("| — | - | - | - | 0 | 0 | 0 | 0 | 0 | 0 | - |")
     if old_text:
         lines = old_text.splitlines()
         for i, ln in enumerate(lines):

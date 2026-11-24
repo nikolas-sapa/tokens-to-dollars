@@ -20,8 +20,11 @@ python3 tools/memory-consolidate/consolidate.py --root .
 - **yield recompute** — recounts `[Y-n]` records per technique across the
   scanned files (`- [Y-3] I-12 → technique (idor) → outcome: finding —
   intents spent: 2`) and regenerates `memory/lessons/technique-yield.md`
-  deterministically: header + ranked table, sorted by findings then records.
-  Content under a `## manual notes` heading survives regeneration.
+  deterministically: header + ranked table, sorted by LCB90. A `failure:
+  <class>` field on a dead outcome tallies into a per-(technique, ctx)
+  failure mix whose dominant mode lands in the last table column — it
+  annotates the brief, never the posterior. Content under a `## manual
+  notes` heading survives regeneration.
 - **contradictions** — a normalized claim that appears both struck and live
   (in the same or different files) is flagged to stdout. Never auto-resolved;
   a human decides which side is true.

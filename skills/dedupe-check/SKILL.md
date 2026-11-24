@@ -47,7 +47,7 @@ Search all five; record every query and hit count.
 ## Multi-view dedup
 
 The four-axis check is necessary but shallow — two reports can share asset
-and class and still be different bugs. Score each candidate match on four
+and class and still be different bugs. Score each candidate match on five
 views independently:
 
 - **Description** — same stated root cause and trigger, not just same CWE.
@@ -58,6 +58,34 @@ views independently:
   difference never masks a same-endpoint match.
 - **Impact** — same demonstrated consequence; a weaker variant of a
   disclosed bug is still a dup.
+- **Structural** — same code shape under renaming. Normalize the candidate
+  to a structural signature and compare signatures, not text. Same
+  signature + same asset = same bug pre-PoC even when identifiers, param
+  names, and payload strings all differ — the analog of the ~45% pre-PoC
+  duplicate cut structural matching buys before an exploit is attempted.
+  A different sink or source type is a different signature; the view
+  abstains when neither side exposes code or a normalized request pair.
+
+### Structural signature format
+
+`shape:<func-shape>/sink:<sink-type>/src:<source-type>` — computed by pure
+pattern rules over the implicated code or request pair, no AST library:
+
+1. Collapse every identifier to `id` and every string/numeric literal to
+   `lit` in the implicated code or request pair.
+2. `func-shape` — the control-flow skeleton carrying tainted data, as a
+   hyphen-joined call/flow sequence (`assign-then-call`,
+   `concat-then-sink`, `loop-filter-then-sink`).
+3. `sink-type` — the dangerous operation class: `sql-query`, `exec-shell`,
+   `redirect`, `template-render`, `deser`, `file-read`, `file-write`,
+   `ssrf-fetch`, `dom-write`, `eval`, `authz-check`.
+4. `src-type` — where attacker input enters: `query-param`, `path-seg`,
+   `header`, `cookie`, `body-field`, `file-upload`, `ws-msg`,
+   `graphql-arg`.
+
+Example: `shape:concat-then-sink/sink:sql-query/src:header` is one
+signature whether the header was `X-Ref` or `Referer` and the payload
+`' OR 1=1` or `1'`.
 
 The fix boundary is the real test. **Same root cause closed by one patch =
 duplicate**, even across different endpoints or params. **Different fixes

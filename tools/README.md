@@ -207,6 +207,23 @@ triggers. Fetching requires `--only-host` (exact match, repeatable) per
 prints unified diffs of stored text bodies when `--store-bodies` was used
 on the check.
 
+## patch-hunter
+
+`patch-hunter/patch_hunter.py` is diff-seeded variant analysis (Big Sleep /
+KNighter / CopyFail): a security fix commit is a hunt seed because the patch
+itself names the bug class, the misused API, and the missing guard. `seed
+--repo <path|url> --commit <sha|a..b>` parses the diff into `seed.json` —
+changed functions, a bounds/null-deref/UAF/overflow/injection/auth
+heuristic from patch keywords plus delta shape, and sibling candidates
+(same-file, caller-of, api-user, missing-guard). `variants --seed seed.json`
+grep-sweeps the repo (no build) for call sites lacking the fix's guard terms
+within `--window` lines — `pre-patch-shape` hits are the CopyFail signature.
+`watch manifest.json` polls repos for new commits matching
+`fix|security|cve|overflow|bounds|auth` and appends `kind:patch-seed` lines
+to `triggers.jsonl` (change-detect envelope), feeding the orchestrator.
+Offline on local clones by default; `--fetch`/clones need the git host in
+`only_hosts`/`--only-host` — no allowlist, no traffic.
+
 ## memory-consolidate
 
 `memory-consolidate/consolidate.py --root <repo>` is sleep-time maintenance

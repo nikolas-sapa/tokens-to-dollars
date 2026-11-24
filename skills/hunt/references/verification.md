@@ -58,6 +58,31 @@ Every suspected vulnerability must pass the relevant checks below.
 
 Before the gates run, the verifier scores every candidate finding on confidence (1-5). The score is a sampled self-rating: rate each candidate several times independently and average — one shot ratings are noise. Candidates are verified highest-score-first; low scorers get a capped verification budget and are dropped when it is exhausted rather than worked until something sticks. This is the RoboDuck/AIxCC triage pattern: the gate sequence is expensive, so spend it where the prior is strongest. The pre-score ranks work order only — it never raises a finding's confidence class and never substitutes for a gate.
 
+## Two-stage verification funnel — cheap score first, agent verify on the top of the ranking
+
+The ten-gate sequence is the expensive stage (~$0.50 per candidate in agent-time analog), so it never runs against the raw candidate list. Stage one is deterministic and near-free (~$0.001 per report analog): pattern-match the claimed class against the capture — is the string actually reflected, the sink reachable, the invariant line crossed — plus a response-diff heuristic checking the controlled request diverged from baseline in the direction the hypothesis requires. Stage one ranks; it never confirms, and passing it raises no confidence class.
+
+Stage two spends the real budget only on the top of that ranking: the top-N cap is ~20% of the candidate pool or an EV-sorted budget (expected severity × stage-one score per remaining verification dollar), whichever binds first. Everything below the cap stays `signal_only` or `plausible` — unfunded, not refuted.
+
+Two amortizations compound across engagements:
+
+- **Harness cache.** A validated repro harness or "input encoder" — the known-good request template that reaches the sink — is cached per (target-class, vuln-class). A second SSTI candidate on the same stack re-runs the cached harness and re-verification is near-free.
+- **Speculative racing.** Cheap verification attempts run in parallel across the top candidates; the first confirmed signal kills its siblings. A race burns idle tokens, never a second full verify.
+
+## Failure taxonomy — every dead candidate logs a cause
+
+When a candidate dies at any stage, the verifier logs exactly one failure class and a one-line reason — fixed vocabulary, machine-readable, feeding `tools/memory-consolidate`:
+
+- `unreachable_path` — the sink or route cannot be reached from authorized inputs
+- `missing_precondition` — a setup condition is absent: no second tenant, feature flag off, role unattainable
+- `wrong_build_config` — the deployed build or config differs from what the hypothesis assumed
+- `insufficient_attacker_control` — controllable input never reaches the vulnerable operation
+- `out_of_scope` — exercising the path would exceed the manifest
+- `duplicate` — `../../dedupe-check` matched the same root cause
+- `false_pattern` — the signal was a look-alike, not a boundary break
+
+The class lands on the closing record: `failure: <class>` on the `[Y-n]` yield line, and `killed_by`/`constraint` on the `[DP-n]` disproven node (`../../orchestrator` §2). The mix matters — `missing_precondition` and `wrong_build_config` argue for better setup and a retry, not abandoning the technique; `false_pattern` is the only class that indicts the technique itself.
+
 ## Gate 1 — Permission
 
 Was the exact asset, path, method, identity, and technique authorized?

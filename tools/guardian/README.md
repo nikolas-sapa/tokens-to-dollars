@@ -55,14 +55,37 @@ line `<verdict> [<rule>] <reason>`, or the verdict object under `--json`.
 | `in_scope_argv` | allow | shell argv whose extracted hosts are all authorized |
 | `safe_argv` | allow | argv with no remote targets at all |
 
+## Harmless Mode
+
+Scope gating decides **where** an action may land; Harmless Mode
+adjudicates **what** the action is — six high-risk classes fired even
+on authorized targets (VenusTech/Ethiack pattern). Each hit emits the
+class name as the rule.
+
+| class | verdict | fires on | manifest escape |
+|---|---|---|---|
+| `persistence` | deny | `crontab`, `systemctl enable`, `launchctl`/`schtasks`/`at`, `useradd`/`usermod -G`/`net user /add`, writes to cron/init.d/systemd/LaunchAgents/`authorized_keys`/shell-rc paths | `harmless_allow: persistence` |
+| `tunneling` | deny / escalate | forwarders (`ssh -L/-R/-D/-W/-w`, socat, ngrok, chisel, frp, cloudflared, gost, ligolo, sshuttle, proxychains…) deny; `nc`-family listeners/exec relays escalate | `tunneling` |
+| `dos_shaped` | deny / escalate | flood tools (`hping3`, `slowloris`, `t50`, `hulk`, `stress`) and declared `rate` > 10×`rps_cap` or 50 rps deny; shell loops over http clients, `xargs -P≥20`, `seq\|xargs`, `yes\|`, and generic load tools (`wrk`, `vegeta`, `ab`, `k6`) escalate | `dos_shaped` |
+| `brute_force` | deny / escalate | credential-attack tools (`hydra`, `medusa`, `ncrack`, `patator`, `crowbar`…) deny; POST to credential-shaped path (`/login`, `/auth`, `/otp`…) without an `attempts` bound escalates, >5 declared attempts denies | `brute_force` |
+| `file_write_delete` | deny / escalate | `rm`/`unlink`/`rmdir`/`truncate`/`find -delete` on absolute paths outside the approved workspace (action `cwd` + manifest `workspace` roots) deny; `tee`/`cp`/`mv`/`install`/`sed -i`/`>`/`>>`/`curl -o` writes outside it escalate | `file_write_delete:<path-prefix>` (e.g. `file_write_delete:/tmp/uploads` on a file-upload scope) |
+| `destructive_request` | deny / escalate | mutating verbs on mass/account-shaped paths (`/users`, `/accounts`, `/bulk-*`, `/admin`…) deny; bare `DELETE`/`PUT` on unmarked endpoints escalate | `destructive_request:<path>` |
+
+Allow-list entries are `class` (whole class) or `class:qualifier`
+(qualifier `*` or a substring of the hit detail — path prefix,
+`METHOD url`, tool name). First non-allow-listed hit wins.
+
 ## Manifest
 
 `.md` manifests use the scope-parser schema verbatim (parsed by
 `wrap.parse_manifest`, so `authorized_assets` / `hard_denylist` /
-`rate_limits.rps_cap` behave identically). Guardian adds two optional
-keys: a `## forbidden_actions` section (`- "substring"` items matched
-against `METHOD url` or the argv string) and `allow_g3: true` anywhere
-(also accepted: `g3:` / `destructive_shell:` with `true|yes|allowed|g3`).
+`rate_limits.rps_cap` behave identically). Guardian adds optional keys:
+a `## forbidden_actions` section (`- "substring"` items matched against
+`METHOD url` or the argv string), `allow_g3: true` anywhere (also
+accepted: `g3:` / `destructive_shell:` with `true|yes|allowed|g3`), a
+`## harmless_allow` section (`- "class:qualifier"` items per Harmless
+Mode above), and `## workspace` (`- "/path"` items, also `workspace:
+"/path"`) naming the approved filesystem roots for `file_write_delete`.
 
 `.json` manifests mirror the same sections:
 
@@ -71,6 +94,8 @@ against `METHOD url` or the argv string) and `allow_g3: true` anywhere
                        {"asset": "map.example.com", "eligible_for_bounty": false}],
  "hard_denylist": ["status.example.com"],
  "forbidden_actions": ["wp-admin"],
+ "harmless_allow": ["file_write_delete:/tmp/uploads"],
+ "workspace": ["/tmp/work"],
  "rate_limits": {"rps_cap": 5},
  "allow_g3": false}
 ```

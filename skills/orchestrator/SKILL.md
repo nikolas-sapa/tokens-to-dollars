@@ -62,7 +62,7 @@ Resumed sessions act on superseded facts roughly one run in four; on credential-
 
 **Exploration graph** (per engagement, `exploration-graph.md`; archived to `graph-archive/` at close):
 
-- Node types: `goal`, `intent`, `fact`, `finding`, `hint`, `decision`.
+- Node types: `goal`, `intent`, `fact`, `finding`, `hint`, `decision`, `disproven`.
 - Lineage edges: `spawns`, `derived_from`, `yields`, `proves`.
 - Format:
   ```
@@ -72,9 +72,12 @@ Resumed sessions act on superseded facts roughly one run in four; on credential-
   - [FD-<n>] finding: <proven boundary break> — yields: I-<n> — anchor: AS-<n> — harm-gate: pass|note|n/a
   - [H-<n>] hint: <human or orchestrator guidance> — attached to: <node>
   - [D-<n>] decision: <conclusion> — rejected: <alternatives + why> — revisit-if: <trigger> — derived_from: <nodes>
+  - [DP-<n>] disproven: <dead hypothesis> — killed_by: <I-<n>/verdict/gate> — constraint: <hard rule for future probes> — anchor: AS-<n>
   ```
 - **Anchors are mandatory:** every fact and finding pins to an asset node. Unanchored facts are rumors — keep them as hints until anchored.
 - **Decisions are nodes, not chat.** A planner call that discarded real alternatives gets a `[D-n]` — the conclusion, what was rejected and why, and the trigger that reopens it (a fact revoked, a new asset class, a technique newly yielding). A decision whose rejected alternatives' premises changed is revisited on the next wake, not defended.
+- **Disproven paths persist like findings.** A killed hypothesis earns a `[DP-n]`, never just a dropped intent — `killed_by` names the evidence that closed it, `constraint` is the hard rule it leaves behind. Open `disproven` nodes are do-not-retest for every later wave unless the killing precondition itself changed; that change lands as a new fact and the node is revisited like a `[D-n]` whose premise moved.
+- **Rejected PoCs emit hard constraints.** A rejected attempt writes its `constraint:` as a rule the planner can copy verbatim — "WAF strips `../` in path params" becomes "traversal probes on this surface use encoding variants only". The planner folds open constraints on a surface into the `[CONSTRAINTS]` field of later intent packets; a worker honors them like `[PROHIBITED ACTIONS]` on technique choice.
 
 ## 3. Worker settlement — how supervised work ends
 
@@ -126,6 +129,7 @@ surfaces: <coverage-ledger surfaces to RELEASE, with final status>
    [REQUIRED EVIDENCE] request/response pairs, timing data, code citations per ../evidence
    [OUTPUT FORMAT] fact nodes + asset observations + trace file
    [PROHIBITED ACTIONS] inherited + intent-specific
+   [CONSTRAINTS] hard lines from open disproven nodes on this surface
    [PRIOR TRACES] prior sibling intents on this surface: ids + 2-3 line outcome digests
    ```
    The `[AUTHORIZATION]` field is the answer to worker refusals: an agent that sees a named public program, its published policy, the parsed manifest, the gate, and the human approval has verifiable context, so it executes instead of declining. Fill it honestly — never invent an approval.
@@ -151,11 +155,14 @@ Traces are leads, not facts — anything a worker lifts from another worker's tr
 - Evidence capture is always on: requests/responses, tool configs, timing data, code citations, per `../evidence`. If it isn't recorded, it didn't happen.
 - **Goal-met guard.** A `[G-n]` goal closes only on a verifier-countersigned proof node — a `proves:` edge from a verified `[FD-n]` — never on planner assertion or worker prose (BaaRai-style prove_goal). The planner proposes; the verifier's evidence disposes.
 - **Attribution on every gate.** Audit-log entries for gate decisions record `decided_by: human|rule|judge` — a manifest rule, a human approval, and a judge call are different authorities and are logged as such.
+- **GUI-conditional findings route to a human, never to auto-prosecution.** A candidate whose trigger requires a real user interacting with a rendered UI — web-GUI RCE, click-path-dependent flows, drag-and-drop or canvas triggers — is flagged `human-attention` and is never dispatched as a worker intent; headless workers systematically miss the class (ARTEMIS: every agent missed the TinyPilot web-GUI RCE that 80% of human testers caught). The flag applies at intent dispatch and at verifier confirmation — either stage can route it.
+- **Dual-line taint on source-audit intents.** A taint claim settles only when BOTH directions check out: forward source→sink reachability AND reverse sink→source reachability, each cited in evidence. A single direction lands as a `[H-n]` hint, never a `[FD-n]` finding.
 
 ## 8. The learning loop — what makes every engagement better than the last
 
 **Per-intent yield record** (append to the exploration graph when an intent closes):
-`- [Y-<n>] I-<n> → technique (<id>) → outcome: finding|fact-only|FP|blocked — intents spent: <k> — cost: <tokens per ../token-ledger> — ctx: <target/engagement class>`
+`- [Y-<n>] I-<n> → technique (<id>) → outcome: finding|fact-only|FP|blocked — intents spent: <k> — cost: <tokens per ../token-ledger> — ctx: <target/engagement class> — failure: <class>: <one-line reason>`
+`failure:` is required on `FP`/`blocked`/`fact-only` deaths and uses the fixed taxonomy in `../hunt/references/verification.md` — it feeds the failure-mix annotation in the yield ledger (`tools/memory-consolidate`).
 
 **Engagement-end distill** (mandatory before closing; the orchestrator does it, then a human reviews):
 
@@ -185,7 +192,7 @@ Traces are leads, not facts — anything a worker lifts from another worker's tr
 
 - **Prior unfinished chains first** — notes-not-reports and half-finished chains are the opening moves of the next hunt. Recorded verbatim in `lessons.md`, they re-enter the todolist before fresh exploration.
 - Technique shortlist per the funnel above — LCB90-ranked exploit picks plus the Thompson-sampled exploration slice, for this target/engagement class.
-- Known FP patterns, so the verifier starts skeptical in the right places.
+- Known FP patterns and open `[DP-n]` constraints — dead hypotheses and rejected-PoC rules feed `[CONSTRAINTS]` so no wave re-tests a killed path, and the verifier starts skeptical in the right places.
 - Only then: standard breadth — playbook coverage and gap analysis — for anything memory says is unexplored.
 
 At scale the brief reads a per-target `index.md` (node-id + one-liner + date) and fetches detail on demand — top-k scored by recency × importance × surface/technique match, never a file dump. Hint and fact priority inside it decays with age (pheromone-style), so stale leads die instead of competing with fresh signal — `HEARTBEAT` staleness from `../coverage-ledger`, applied to knowledge.

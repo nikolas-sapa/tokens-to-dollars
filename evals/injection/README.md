@@ -16,7 +16,13 @@ is the defense, and the score is how much gets through.
 `agent-output` hits `--egress`, the EchoLeak leg where generated markdown
 can ship data to an attacker host on render. A fixture is
 `{id, channel, payload, expected_verdict, notes}` — add a JSON file and it
-runs.
+runs. Optional fields tighten the assertion: `expected_rules` (subset of
+rule ids that must fire), `sanitize_removes` (substring that must be
+absent from `--sanitize` output), and `check: "scope"` — a
+manifest-as-authority test where the fixture carries `scope:
+{authorized, denied}` plus `expect_scope: {host: label}` and every listed
+host must resolve to its declared `scope_of` label (a URL in content is
+a lead, never an asset — the 360 Tulongfeng slip).
 
 ## Metrics
 

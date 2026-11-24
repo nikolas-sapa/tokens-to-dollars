@@ -33,7 +33,10 @@ Every draft carries these sections, in this order:
 5. **Impact** — attacker, victim, loss (see formula below).
 6. **Evidence references** — paths into `evidence/<finding-id>/`.
 7. **Suggested remediation** — concrete fix, not "sanitize input".
-8. **Scope citation** — the manifest line covering asset + bug class.
+8. **Suggested mitigation** — when the vuln class is edge-blockable, a
+   WAF rule sketch for programs that cannot patch immediately. Omit
+   when no edge rule covers the class.
+9. **Scope citation** — the manifest line covering asset + bug class.
 
 Draft markdown skeleton (fill, don't restructure):
 
@@ -44,7 +47,8 @@ Draft markdown skeleton (fill, don't restructure):
 <what> in <where> lets <attacker> do <action>, causing <loss> for <victim>.
 
 ## Severity
-<tier> — per program severity table: "<cited tier line>".
+<tier> — per program severity table: "<cited tier line>". Claimed
+<first-pass estimate>; calibrated <tier> after the discount rule.
 <1-2 sentences mapping evidence to tier criteria. CVSS vector if required:>
 
 ## Steps to reproduce
@@ -58,11 +62,20 @@ Loss: <quantified — records, funds at risk, privilege gained>.
 
 ## Evidence
 - evidence/<finding-id>/request.txt, response.txt
+- evidence/<finding-id>/repro.<ext> — minimal runnable repro script
+- evidence/<finding-id>/capture.<ext> — screenshot/transcript with the
+  canary or OAST hit visible
 - evidence/<finding-id>/poc.<ext>
 - evidence/<finding-id>/notes.md
 
 ## Remediation
 <concrete fix: check X before Y, rate-limit Z, validate bound on N>
+
+## Suggested mitigation
+<only when the class is edge-blockable: WAF rule sketch — match
+<pattern> on <inbound request | outbound response>, covering the
+variant family, not one payload. For programs that cannot patch
+immediately; omit the section otherwise.>
 
 ## Scope
 Asset: <manifest line id>. Bug class: <manifest line id>.
@@ -86,6 +99,13 @@ The attestation is a claim the submitter stands behind. If the finding
 was never manually reproduced, the draft fails the quality gate — the
 block does not launder an unverified finding.
 
+Attribution hygiene: when AI tooling assisted, the report format stays
+honest — no "found by <model>" bylines, no inflated discoverer claims.
+The named human operator owns the submission and every claim in it
+(HackerOne's Hackbots policy: a human account, a human attestation).
+The methodology block states assistance; it never assigns authorship
+to a tool.
+
 ## Steps-to-reproduce rules
 
 - Every request is pasted verbatim from `evidence/<finding-id>/request.txt`.
@@ -96,6 +116,13 @@ block does not launder an unverified finding.
 - A video PoC is a supplement, never a replacement: <=2 minutes, stored
   under `evidence/<finding-id>/`, and the report must still repro from
   the written steps alone.
+- Written steps alone do not ship. Every draft carries
+  `evidence/<finding-id>/repro.<ext>` — a minimal runnable script that
+  fires the trigger
+  (single file, standard tooling, no framework setup) — plus a captured
+  artifact: screenshot or transcript with the proof visible (canary
+  token, OAST callback, the state change itself). Prose steps
+  describe; artifacts prove.
 - End with the observable result: what the triager sees that proves the bug.
 
 ## Impact statement formula
@@ -125,6 +152,15 @@ Same economics after submission: retest requests and NMI replies carry
 response-time expectations, and fast human follow-up is tracked (Google
 VRP's 1.2x multiplier scores replies inside ~3 workdays). The checklist
 line is a promise to stay reachable, not the end of the work.
+
+Beyond the patch: when the vuln class is edge-blockable, the draft also
+carries the Suggested mitigation block — a WAF rule sketch naming the
+pattern to match and the direction it applies to (inbound request,
+outbound response), stated against the variant family, not one payload
+(the exploit→WAF pattern: ship a block while the patch lands). It
+serves programs that cannot patch immediately and is a sketch for their
+infra team, not a shipped ruleset. A class no edge rule can cover omits
+the block — a non-functional mitigation reads worse than none.
 
 ## Per-platform calibration
 
@@ -250,6 +286,14 @@ block — lives in `references/finding-format.md`.
 A draft may only be written after all nine pass. Any fail routes the
 finding back to validation, not to prose workarounds.
 
+Before the nine, one paragraph settles the security-vs-ordinary-bug
+line — the post-slop failure class is accurate hundreds-of-line reports
+that misjudge it. Write "why this is a security bug": who loses what,
+under which trust-boundary crossing, and why the behavior is not what
+the system intends. If the paragraph cannot name a concrete attacker
+benefit crossing a boundary, hold the report — nothing gets drafted.
+That paragraph is what separates valid from accurate-but-rejected.
+
 1. **Attacker real?** Named actor + required access level, not "anyone".
 2. **User harm real?** Named victim + concrete loss, not "bad practice".
 3. **In scope?** Asset and bug class both inside the manifest; cite the line.
@@ -292,6 +336,17 @@ they calibrate `../../evals/fprate`.
   matching tier. CVSS 3.1/4.0 is the fallback when the table is silent;
   YesWeHack requires the vector regardless. Always include the full vector
   string, not just the score.
+- Severity inflation discount: AI-found severity claims skew high — a
+  VulnCheck audit found 91.5% claimed Critical/High vs 51.3%
+  maintainer-confirmed. So the draft states both numbers: the claimed
+  severity (first-pass estimate) and the calibrated severity (what the
+  executed evidence supports). Without an executed impact proof — the
+  trigger run end to end against the real target — the report's ask
+  defaults one tier below the model's first estimate. Two flags force
+  the downgrade regardless of estimate: the attack needs an
+  already-privileged role, or it needs uncommon user interaction (the
+  Immunefi precondition rule, which generalizes). A calibrated-down
+  severity that holds beats an inflated one that burns program trust.
 - Immunefi severity = USD at risk. Price from on-chain state at a stated
   block, show the arithmetic, distinguish direct theft from griefing /
   unclaimed-yield classes — they map to different tiers.
@@ -305,7 +360,7 @@ After writing the draft, append exactly one line to
 `reports/<program>/SUBMIT-CHECKLIST.md`:
 
 ```
-- [ ] <finding-id> — <class> on <surface> — severity <tier> — evidence ok — dedupe clean — pending human submit
+- [ ] <finding-id> — <class> on <surface> — severity <tier> — evidence ok — repro ok — dedupe clean — pending human submit
 ```
 
 The skill's job ends at that checklist line. Submission is the human's.

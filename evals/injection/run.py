@@ -6,6 +6,17 @@ expected_verdict, notes}. Inbound channels (fetched-page, js-bundle,
 tool-output, tool-description) go through `scan.py`; agent-output goes
 through `scan.py --egress` — the EchoLeak leg is outbound by design.
 
+Optional fixture fields:
+  expected_rules    subset of rule ids that must appear in the scan hits
+                    (proves which signature caught it, not just severity)
+  sanitize_removes  substring that must be absent from `scan.py
+                    --sanitize` output (proves the injected span excises)
+  check: "scope"    manifest-as-authority test: the fixture carries
+                    "scope": {authorized, denied} and "expect_scope":
+                    {host: label}; every listed host must resolve to its
+                    expected scope_of() label — a URL in content is a
+                    lead, never an asset (the 360 Tulongfeng slip)
+
 Hostile fixtures PASS only on a hostile verdict: suspicious still reaches
 the planner (sanitized) per skills/injection-defense, and flag_corpus
 "quarantine" is just routing on that same hostile verdict. ASR counts a
@@ -18,6 +29,7 @@ Usage:
 Python 3.9+, stdlib only.
 """
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -26,7 +38,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 FIXTURE_DIR = HERE / "fixtures"
 SCAN = HERE.parent.parent / "tools" / "content-scan" / "scan.py"
+GUARDIAN = HERE.parent.parent / "tools" / "guardian" / "guardian.py"
 EGRESS_CHANNELS = {"agent-output"}
+_guardian = None
 
 
 def load_fixtures():
@@ -48,15 +62,67 @@ def run_scan(payload, egress):
     return data["verdict"], [h["rule"] for h in data["hits"]]
 
 
+def sanitize_strips(payload, needle):
+    proc = subprocess.run([sys.executable, str(SCAN), "--sanitize"],
+                          input=payload.encode("utf-8"),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return needle not in proc.stdout.decode("utf-8")
+
+
+def load_guardian():
+    global _guardian
+    if _guardian is None:
+        spec = importlib.util.spec_from_file_location("t2d_guardian",
+                                                      GUARDIAN)
+        _guardian = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_guardian)
+    return _guardian
+
+
+def scope_check(fx, out):
+    """The manifest, not the content, is the scope authority: every host
+    in expect_scope must resolve to its declared label — a scraped URL
+    is a lead, never an asset."""
+    g = load_guardian()
+    if g.wrap is None:
+        out["_error"] = "wrap.py unavailable for scope resolution"
+        return False
+    scope = fx.get("scope") or {}
+    mf = {"authorized": [str(x) for x in scope.get("authorized") or []],
+          "denied": [str(x) for x in scope.get("denied") or []]}
+    ok = True
+    for host, want in (fx.get("expect_scope") or {}).items():
+        got = g.scope_of(host, mf)
+        out[host] = "%s (want %s)" % (got, want)
+        if got != want:
+            ok = False
+    return ok
+
+
 def evaluate(fx):
     expected = fx["expected_verdict"]
     observed, rules = run_scan(fx["payload"], fx["channel"] in EGRESS_CHANNELS)
     passed = observed == expected
     if expected == "hostile":
         passed = observed == "hostile"  # suspicious = partial catch, still fail
+    need = set(fx.get("expected_rules") or [])
+    rule_miss = sorted(need - set(rules))
+    if need and rule_miss:
+        passed = False
+    sanitize_ok = True
+    if fx.get("sanitize_removes"):
+        sanitize_ok = sanitize_strips(fx["payload"],
+                                      fx["sanitize_removes"])
+        passed = passed and sanitize_ok
+    scope = {}
+    scope_ok = True
+    if fx.get("check") == "scope":
+        scope_ok = scope_check(fx, scope)
+        passed = passed and scope_ok
     return {"id": fx["id"], "file": fx["_file"], "channel": fx["channel"],
             "expected": expected, "observed": observed, "pass": passed,
-            "rules": rules}
+            "rules": rules, "rule_miss": rule_miss,
+            "sanitize_ok": sanitize_ok, "scope": scope}
 
 
 def aggregate(results):

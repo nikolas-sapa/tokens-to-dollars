@@ -154,7 +154,7 @@ One finding, ~$7.10 burned. That arithmetic is the entire business model.
 The pipeline ends at `reports/acme/SUBMIT-CHECKLIST.md`:
 
 ```markdown
-- [ ] int-0009-a — IDOR/BOLA on api.acme.example/graphql — severity high — evidence ok — dedupe clean — pending human submit
+- [ ] int-0009-a — IDOR/BOLA on api.acme.example/graphql — severity high — evidence ok — repro ok — dedupe clean — pending human submit
 ```
 
 Before you check that box:

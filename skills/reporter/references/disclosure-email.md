@@ -59,8 +59,8 @@ Reproduction:
 Impact: attacker <who + access> can <action>; victim <who>; loss
 <quantified — records, funds at risk, privilege gained>.
 
-Evidence (attached): <file list — request.txt, response.txt, poc.ext;
-by filename, never pasted inline>
+Evidence (attached): <file list — request.txt, response.txt,
+repro.ext, capture.ext, poc.ext; by filename, never pasted inline>
 
 Suggested fix: <concrete — check X before Y; not "sanitize input">
 
@@ -125,7 +125,7 @@ All three burn the address itself — programs abandon published contacts.
 The line keeps its shape and gains the channel:
 
 ```text
-- [ ] <finding-id> — <class> on <surface> — severity <tier> — evidence ok — dedupe clean — channel:email to <address> — pending human send
+- [ ] <finding-id> — <class> on <surface> — severity <tier> — evidence ok — repro ok — dedupe clean — channel:email to <address> — pending human send
 ```
 
 Five pre-send checks:

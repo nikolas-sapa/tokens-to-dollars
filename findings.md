@@ -269,3 +269,20 @@ Notable intel (findings only):
 **Recon**: add wraps gau/waybackurls/arjun/x8/subzy/wafw00f/naabu-passive; asset-graph fields (subdomain source+ips+cdn+takeover-fp, service proto+banner+tls, app tech+favicon_mmh3+waf, endpoint methods+params+auth_required+state_changing); CT monitoring new-subdomain trigger; OOS-neighbor leads.
 
 **Dedupe**: informative_rate from hacktivity; informative-prone scopes deprioritized; Intigriti informative=neutral.
+
+
+## Wave 12 — production-systems audit (Nov 2026) deltas
+
+**The moat, empirically settled**: model scale ≠ results. ToB 2nd at AIxCC on non-reasoning models; Tenzai #1 H1 Q3 on open-weight GLM 5.2 (3.5% FP, -30% cost vs Opus 4.6); AISLE 6 curl CVEs where Mythos+Codex got 0; Anthropic 55.9% reject on un-triaged OSS scanner. Deterministic oracle + externalized scope + triage quality = the whole game. Our architecture bets confirmed.
+
+**New mechanisms to encode:**
+- patch-hunter: diff/commit-seeded variant analysis (Big Sleep; KNighter 30 CVEs; CopyFail 9yr bug in 1hr from 2-line prompt). PatchSlop: 3.2% of kernel CVEs are introduced by prior fix commits — every fix commit is a hunt seed.
+- Verifier funnel: cheap score → top-20% agent verify (RoboDuck $0.001→$0.50/report); cache validated Input Encoders; race parallel attempts, kill siblings on first success.
+- Failure taxonomy log (unreachable path | missing precondition | wrong build config | insufficient control) → feeds consolidate yield scoring (FORGE RL-loop analog).
+- Blackboard: persist disproven paths (not just findings); rejected PoC → hard search constraint for next wave (Sangfor evidence graph).
+- Dedupe: +AST structural view (~45% dup cut pre-PoC, FORGE).
+- Reporter: severity discount (AI claims inflate 91.5%→51.3% maintainer-confirmed; downrate unless proof is strong); auto-WAF-mitigation section (Tenzai/Terra); security-vs-ordinary-bug framing mandatory (the post-slop failure class — accurate reports that misjudge security impact); repro script + screenshot proof artifacts (Tenzai standard).
+- Guardian: Harmless-Mode action classes — real-time block file writes/deletes/tunneling/DoS/persistence/brute-force.
+- Evals: report-content injection (H1 #2372363 — invisible injection hijacked triage agent severity); scope-bait fixture (360's scraped-URL slip).
+- Orchestrator: GUI-conditional bugs route to human (ARTEMIS: all agents missed web-GUI RCE 80% of humans caught); dual-line taint (forward+reverse) in source-audit.
+- Meta: exploit_agent in the wild (GTIG Nov 2026) = patch-diff→exploit is now a race; speed post-disclosure matters. Attribution hygiene: only 2/2,544 CVEs use TOOL credit type — keep claims honest (tiers: direct credit > audited ledger > human-tandem > vendor claim).
