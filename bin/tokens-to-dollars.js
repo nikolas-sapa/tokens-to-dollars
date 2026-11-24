@@ -287,6 +287,25 @@ async function wizard() {
   console.log("       t2d run bounty-radar/bounty_radar.py --rank-programs out/scope/programs.json --out-dir out/radar");
 }
 
+// config.env -> child env: a per-tool allowlist so a wrapped recon
+// binary never inherits keys it doesn't need. Tools not listed get no
+// config keys at all; a new requirement goes in this table. A trailing
+// "*" is a prefix match (T2D_CRED_<PROG> creds_ref material is dynamic).
+const TOOL_ENV_KEYS = {
+  "bounty-radar": ["GITHUB_TOKEN", "GH_TOKEN"],
+  "ingest-knowledge": ["SOLODIT_API_KEY"],
+  "session-broker": ["T2D_CRED_*", "T2D_TOTP_*"],
+};
+
+function envKeyAllowed(key, allow) {
+  for (const p of allow) {
+    if (p.endsWith("*") ? key.startsWith(p.slice(0, -1)) : key === p) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function run(args) {
   const tool = args.shift();
   if (!tool || tool.includes("..")) {
@@ -300,8 +319,12 @@ function run(args) {
     process.exitCode = 2;
     return;
   }
+  const cfgEnv = loadConfig().env || {};
+  const allow = TOOL_ENV_KEYS[tool.split("/")[0]] || [];
   const env = { ...process.env };
-  Object.assign(env, loadConfig().env || {});
+  for (const [k, v] of Object.entries(cfgEnv)) {
+    if (envKeyAllowed(k, allow)) env[k] = v;
+  }
   const r = spawnSync("python3", [p, ...args], { stdio: "inherit", env });
   process.exitCode = r.status === null ? 1 : r.status;
 }

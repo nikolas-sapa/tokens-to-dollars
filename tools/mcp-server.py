@@ -16,7 +16,7 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("T2D_ROOT") or TOOLS_DIR.parent).resolve()
 PIN_FILE = ROOT / "memory" / "mcp-pins.json"
-PATH_ARGS = {"log", "sidecar", "out_dir", "file"}
+PATH_ARGS = {"log", "sidecar", "out_dir", "file", "manifest"}
 _TYPES = {"string": str, "boolean": bool, "integer": int,
           "number": (int, float), "array": list, "object": dict}
 
@@ -238,12 +238,23 @@ def _manifest_path(args):
     """Resolve the engaged program's roe-manifest on the same path
     wrap.py's --manifest takes: an explicit `manifest` argument wins,
     then T2D_MANIFEST, then a single engaged program under
-    memory/targets/. None when absent or ambiguous — the adjudicator
-    fails closed on it."""
+    memory/targets/. An explicit path must live at
+    memory/targets/<program>/roe-manifest.* — anything else is refused
+    here rather than adjudicated, since a manifest outside the
+    engagement tree is a forgery, not a scope source. None when absent
+    or ambiguous — the adjudicator fails closed on it."""
     m = args.get("manifest") or os.environ.get("T2D_MANIFEST")
     if isinstance(m, str) and m.strip():
         p = Path(m).expanduser()
-        return str(p if p.is_absolute() else ROOT / p)
+        if not p.is_absolute():
+            p = ROOT / p
+        p = p.resolve()
+        if p.parent.parent != ROOT / "memory" / "targets" \
+                or not p.name.startswith("roe-manifest."):
+            raise InvalidParams(
+                "manifest must be memory/targets/<program>/roe-manifest.*"
+                " under the repo root: %s" % m)
+        return str(p)
     cands = sorted(ROOT.glob("memory/targets/*/roe-manifest.*"))
     return str(cands[0]) if len(cands) == 1 else None
 

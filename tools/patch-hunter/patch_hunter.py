@@ -601,6 +601,14 @@ def removed_signatures(seed):
     return sigs[:SIG_CAP]
 
 
+def embed_safe(v):
+    """A seed field embedded in generated checker source: inert chars
+    only — no quotes, backslashes, newlines, or @placeholders@ — so a
+    hostile seed.json cannot break out of the comment/docstring its
+    fields land in. seed.json is feed-derived data, never trusted."""
+    return re.sub(r"[^A-Za-z0-9_.,:+ /=()-]+", "_", str(v))[:160]
+
+
 def render_checker(seed, seed_path, lang, window):
     calls = seed.get("calls") or {}
     terms = sorted(set(seed.get("changed_functions", []))
@@ -618,15 +626,17 @@ def render_checker(seed, seed_path, lang, window):
            "signatures": sigs,
            "window": window,
            "lang": lang,
-           "bug_class": seed.get("bug_class", {}).get("class", "unknown"),
-           "seed_commit": seed.get("commit", {}).get("sha", "unknown")}
+           "bug_class": embed_safe(
+               seed.get("bug_class", {}).get("class", "unknown")),
+           "seed_commit": embed_safe(
+               seed.get("commit", {}).get("sha", "unknown"))}
     src = (CHECKER_TEMPLATE
            .replace("@CONFIG_JSON@", json.dumps(cfg, indent=1))
            .replace("@BUG_CLASS@", cfg["bug_class"])
            .replace("@SEED_COMMIT@", cfg["seed_commit"])
            .replace("@SEED_SHORT@", cfg["seed_commit"][:12])
-           .replace("@SEED_PATH@", str(seed_path))
-           .replace("@GENERATED@", utcnow()))
+           .replace("@SEED_PATH@", embed_safe(seed_path))
+           .replace("@GENERATED@", embed_safe(utcnow())))
     return cfg, src, {"terms": terms, "guards": guards,
                       "signatures": len(sigs)}
 
@@ -744,11 +754,15 @@ def do_checkers(a):
 
 
 def do_run_checker(a):
-    path = checker_dir(a) / (a.id + ".py")
-    if not path.is_file():
-        known = sorted(p.stem for p in path.parent.glob("*.py"))
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", a.id or ""):
+        sys.exit("error: bad checker id %r (allowed: A-Z a-z 0-9 _ -)"
+                 % a.id)
+    d = checker_dir(a).resolve()
+    path = (d / (a.id + ".py")).resolve()
+    if not path.is_relative_to(d) or not path.is_file():
+        known = sorted(p.stem for p in d.glob("*.py"))
         sys.exit("error: no checker %r in %s (known: %s)"
-                 % (a.id, path.parent, ", ".join(known) or "none"))
+                 % (a.id, d, ", ".join(known) or "none"))
     hits = run_checker_script(path, a.repo)
     if a.out:
         out = Path(a.out)

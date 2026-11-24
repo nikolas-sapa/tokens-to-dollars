@@ -52,6 +52,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -190,6 +191,32 @@ def auth_header(auth_type, token):
 def stamp_auth(req, auth_type, token):
     name, _, val = auth_header(auth_type, token).partition(": ")
     req.add_header(name, val)
+
+
+class StripAuthRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib's redirect handler copies every request header to the new
+    URL — Authorization/Cookie included, to whatever host the 3xx names.
+    Drop credential headers when the hop crosses hosts or downgrades off
+    https (pattern from change-detect's AllowlistRedirect)."""
+
+    AUTH_HEADERS = {"authorization", "proxy-authorization", "cookie"}
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers,
+                                       newurl)
+        if new is None:
+            return None
+        old = urllib.parse.urlsplit(req.full_url)
+        cur = urllib.parse.urlsplit(newurl)
+        if (cur.hostname or "").lower() != (old.hostname or "").lower() \
+                or (old.scheme == "https" and cur.scheme != "https"):
+            for h in list(new.headers):
+                if h.lower() in self.AUTH_HEADERS:
+                    del new.headers[h]
+        return new
+
+
+_OPENER = urllib.request.build_opener(StripAuthRedirect())
 
 
 def detect(status, location):
@@ -348,7 +375,14 @@ def cmd_token(a):
         die(3, "no token material for %r account %s (creds_ref %r "
                "did not resolve)" % (a.program, a.account,
                                      slot_creds_ref(rec, a.account)))
-    print(tok)
+    if a.reveal:
+        print(tok)
+    else:
+        # a live token on stdout lands in model context and shell logs —
+        # withhold it unless the caller explicitly asks to see it
+        fp = hashlib.sha256(tok.encode()).hexdigest()[:16]
+        print("broker: token withheld — %d chars, fingerprint sha256:%s "
+              "(pass --reveal to print)" % (len(tok), fp), file=sys.stderr)
     return 0
 
 
@@ -438,7 +472,7 @@ def cmd_refresh(a):
         data=(b"" if method in ("POST", "PUT", "PATCH") else None))
     stamp_auth(req, rec["auth_type"], tok)
     try:
-        resp = urllib.request.urlopen(req, timeout=a.timeout)
+        resp = _OPENER.open(req, timeout=a.timeout)
         status, headers = resp.status, resp.headers
         body = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
@@ -499,7 +533,7 @@ def cmd_status(a):
                 req = urllib.request.Request(url, method="GET")
                 stamp_auth(req, rec["auth_type"], tok or "")
                 try:
-                    r = urllib.request.urlopen(req, timeout=a.timeout)
+                    r = _OPENER.open(req, timeout=a.timeout)
                     p_status, p_loc = r.status, r.headers.get("Location")
                     r.read()
                 except urllib.error.HTTPError as e:
@@ -626,6 +660,9 @@ def main(argv):
 
     p = sub.add_parser("token")
     common(p)
+    p.add_argument("--reveal", action="store_true",
+                   help="print the live token on stdout (default: withheld, "
+                        "fingerprint only — egress uses `inject`, not this)")
     p.set_defaults(fn=cmd_token)
 
     p = sub.add_parser("inject")

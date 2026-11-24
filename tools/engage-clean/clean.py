@@ -63,9 +63,19 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
     args = ap.parse_args()
-    root, prog = Path(args.root), args.program
+    prog = args.program
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", prog):
+        print("error: bad --program %r (allowed: A-Z a-z 0-9 _ -)" % prog,
+              file=sys.stderr)
+        return 2
+    root = Path(args.root).resolve()
+    mem = root / "memory"
 
-    target = root / "memory" / "targets" / prog
+    target = mem / "targets" / prog
+    if mem not in target.resolve().parents:
+        print("error: target %s escapes memory/ — refusing to trash"
+              % target, file=sys.stderr)
+        return 2
     if not target.exists():
         print("nothing found for program %s" % prog)
         return 1

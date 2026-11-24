@@ -277,15 +277,32 @@ def die(code, msg):
 
 
 # --- session injection -------------------------------------------------
-# The manifest's `session:` field names a broker program; wrap is the
-# egress point that stamps auth. The token exists only inside the child
-# process argv — we scrub it out of everything we re-emit (tool stdout
-# records, outfile parses, child stderr, our own errors).
+# The manifest's `session:` field names a broker program — it must be the
+# manifest's own program handle, never another engagement's. wrap is the
+# egress point that stamps auth: the token reaches the child via a header
+# file where the tool supports it, else inside the child argv — either
+# way we scrub it out of everything we re-emit (tool stdout records,
+# outfile parses, child stderr, our own errors).
 BROKER = os.environ.get("T2D_BROKER") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), os.pardir,
     "session-broker", "broker.py")
+ROOT = os.path.realpath(os.environ.get("T2D_ROOT") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir))
 MASK = "[session]"
 
+# Secret-channel preference per tool: a stamped header in argv is visible
+# in `ps` to every local user for the child's lifetime. Tools listed here
+# can instead read their headers from a file we hand them, so the token
+# never enters argv: "lines" = one 'Name: value' per line (goflags
+# file-input flags: nuclei/katana -H), "config" = a -config file holding
+# a `header` list (written as JSON — YAML is a JSON superset). Unlisted
+# tools keep argv stamping: the token still lives only in the child
+# process, scrubbed from everything we re-emit.
+HEADER_FILE = {
+    "nuclei": ("-H", "lines"),
+    "katana": ("-H", "lines"),
+    "httpx": ("-config", "config"),
+}
 # Fields in tool JSON output that can carry an HTTP status or a redirect
 # target — scanned per line so a dead session feeds broker expire-check.
 STATUS_KEYS = {"status", "status_code", "statuscode"}
@@ -432,13 +449,29 @@ def host_of(tok):
         return None
 
 
+def manifest_path(path):
+    """--manifest must resolve to memory/targets/<program>/roe-manifest.*
+    under the repo root — the manifest is the scope authority, so it
+    lives in the engagement tree or it does not adjudicate. Returns
+    (abs_path, program_handle) or (None, None)."""
+    p = os.path.expanduser(path)
+    if not os.path.isabs(p):
+        p = os.path.join(ROOT, p)
+    p = os.path.realpath(p)
+    parent = os.path.dirname(p)
+    if os.path.dirname(parent) != os.path.join(ROOT, "memory", "targets") \
+            or not os.path.basename(p).startswith("roe-manifest."):
+        return None, None
+    return p, os.path.basename(parent)
+
+
 def parse_manifest(path):
     """Pull the sections the wrapper enforces out of roe-manifest.md
     (schema: skills/scope-parser/SKILL.md): authorized_assets,
     hard_denylist, rate_limits, and the optional identity session
     fields."""
     auth, deny, rps = [], [], None
-    sess, slot = None, None
+    sess, slot, prog = None, None, None
     sec = None
     with open(path, encoding="utf-8") as f:
         for raw in f:
@@ -450,13 +483,18 @@ def parse_manifest(path):
                 continue
             if sec == "identity":
                 # session/session_slot name the broker profile (and IDOR
-                # slot) whose auth the egress layer stamps per request
+                # slot) whose auth the egress layer stamps per request;
+                # program is the manifest's own handle — a session may
+                # only ever name that same handle (checked by the caller)
                 m = re.match(r'session_slot:\s*"?([^"\s]+)"?', line)
                 if m:
                     slot = m.group(1).lower()
                 m = re.match(r'session:\s*"?([^"\s]+)"?', line)
                 if m:
                     sess = m.group(1)
+                m = re.match(r'program:\s*"?([^"\s]+)"?', line)
+                if m:
+                    prog = m.group(1)
             if sec == "authorized_assets" and line.startswith("- "):
                 m = (re.search(r'asset:\s*"([^"]+)"', line)
                      or re.search(r'asset:\s*(\S+)', line)
@@ -485,7 +523,7 @@ def parse_manifest(path):
                 if m:
                     rps = int(m.group(1))
     return {"authorized": auth, "denied": deny, "rps_cap": rps,
-            "session": sess, "session_slot": slot}
+            "session": sess, "session_slot": slot, "program": prog}
 
 
 def matchable(pat):
@@ -690,11 +728,17 @@ def main(argv):
     wa = ap.parse_args(wargs)
 
     manifest = None
+    mprog = None
     if wa.manifest:
+        mpath, mprog = manifest_path(wa.manifest)
+        if mpath is None:
+            return die(3, "manifest %s must live at memory/targets/"
+                          "<program>/roe-manifest.* — the scope authority "
+                          "is part of the engagement tree" % wa.manifest)
         try:
-            manifest = parse_manifest(wa.manifest)
+            manifest = parse_manifest(mpath)
         except OSError as e:
-            return die(3, "cannot read manifest %s: %s" % (wa.manifest, e))
+            return die(3, "cannot read manifest %s: %s" % (mpath, e))
     else:
         sys.stderr.write(NO_MANIFEST % tool)
         if not wa.allow_unmanifested:
@@ -707,6 +751,14 @@ def main(argv):
         if session_slot not in ("a", "b"):
             return die(3, "manifest session_slot %r must be 'a' or 'b'"
                        % manifest["session_slot"])
+        # a manifest may only stamp its own program's session — a forged
+        # manifest naming another program's session is an exfiltration
+        # attempt (token onto attacker-named hosts), not a mistake
+        if session_prog != mprog or (manifest.get("program")
+                                     and manifest["program"] != mprog):
+            return die(3, "manifest session %r is not this engagement's "
+                          "program %r — refusing to stamp another "
+                          "program's session" % (session_prog, mprog))
 
     # Piped stdin is target input for several of these tools (httpx, dnsx);
     # it must be scope-checked too, then replayed to the child.
@@ -773,16 +825,28 @@ def main(argv):
             warn("%s has no rate-limit flag; cap %s not enforced" % (tool, rate))
 
     scrub = None
+    secret_tmp = None
     if session_prog:
         # egress stamping: the broker decides this tool's header shape and
-        # hands back the argv fragment — token lives in the child argv
-        # only. Any refusal (expired/parked/uncarriable tool) fails closed:
-        # never run a session-scoped tool unauthenticated.
+        # hands back the argv fragment — the token rides a header file for
+        # file-capable tools, else the child argv. Any refusal (expired/
+        # parked/uncarriable tool) fails closed: never run a
+        # session-scoped tool unauthenticated.
         frag = inject_args(session_prog, session_slot, tool)
         if frag is None:
             return die(4, "no session stamp for %r — refusing to run %s "
                           "unauthenticated" % (session_prog, tool))
-        final += frag
+        spec = HEADER_FILE.get(tool)
+        vals = [el for el in frag if not el.startswith("-")]
+        if spec and vals:
+            flag, kind = spec
+            fd, secret_tmp = tempfile.mkstemp(prefix="wrap-%s-hdr-" % tool)
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps({"header": vals}) if kind == "config"
+                        else "\n".join(vals) + "\n")
+            final += [flag, secret_tmp]
+        else:
+            final += frag
         scrub = make_scrub(frag_secrets(frag))
 
     ofile = None
@@ -842,6 +906,11 @@ def main(argv):
     finally:
         if tmp:
             tmp.close()
+        if secret_tmp:
+            try:
+                os.unlink(secret_tmp)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

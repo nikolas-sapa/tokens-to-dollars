@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import ipaddress
 import json
 import logging
+import re
+import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, \
+    urlopen
 
 log = logging.getLogger("ingest_scope")
 UA = "tokens-to-dollars-ingest/0.2 (+https://github.com/tokens-to-dollars)"
@@ -27,6 +32,16 @@ SOURCES = [
 
 BBSCOPE_UPDATES = "https://bbscope.com/api/v1/updates"
 SECTXT_PATH = "/.well-known/security.txt"
+SECTXT_MAX_REDIRECTS = 3
+SECTXT_MAX_BYTES = 64 * 1024
+
+# security.txt probes run on hosts named by untrusted third-party feeds —
+# the probe must be a public-FQDN, public-IP target or the pass becomes an
+# SSRF primitive into intranets/link-local/metadata services.
+FQDN_RE = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+LOCAL_TLDS = {"local", "localhost", "internal", "lan", "corp", "home",
+              "localdomain", "invalid", "test", "example", "arpa"}
 
 SH = {"full": True, "yes": True, "partial": True, "true": True,
       "none": False, "no": False, "false": False}
@@ -371,10 +386,61 @@ def merge(a, b):
 # the operator let the file lapse, a dead-program signal. Fills contact{}
 # fields only where still empty so diodb/policy data wins on conflict.
 
-def fetch_text(url, timeout):
+def fetch_text(url, timeout, opener=None, cap=None):
     req = Request(url, headers={"User-Agent": UA, "Accept": "text/plain,*/*"})
-    with urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", "replace")
+    open_ = opener.open if opener is not None else urlopen
+    with open_(req, timeout=timeout) as resp:
+        return resp.read(cap).decode("utf-8", "replace")
+
+
+def public_host(host):
+    """A host the security.txt pass may probe: dotted FQDN with a real
+    TLD (no IP literals, userinfo smuggles, mDNS/local suffixes) that
+    resolves to globally routable addresses only — a feed-named host
+    resolving to 10.x/169.254/::1 is an intranet probe, not a program.
+    Residual: DNS is re-checked at fetch time, so a fast-rebind between
+    this check and urlopen is still possible (TTL-pinning needs a
+    resolver-aware fetch — noted for the architecture pass)."""
+    h = (host or "").lower().rstrip(".")
+    if not FQDN_RE.match(h) or h.rsplit(".", 1)[-1] in LOCAL_TLDS:
+        return False
+    try:
+        infos = socket.getaddrinfo(h, 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    for fam, _, _, _, sa in infos:
+        try:
+            ip = ipaddress.ip_address(sa[0])
+        except ValueError:
+            return False
+        if not ip.is_global:
+            return False
+    return bool(infos)
+
+
+class SecTxtRedirect(HTTPRedirectHandler):
+    """Redirect cap for the security.txt probe: at most
+    SECTXT_MAX_REDIRECTS hops, each target still a public host on the
+    same site (apex <-> subdomain). Anything else is an error, not a
+    chase — a feed entry redirecting to an intranet is the SSRF this
+    pass must not perform."""
+
+    def __init__(self, orig):
+        self.orig = (orig or "").lower().rstrip(".")
+        self.hops = 0
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.hops += 1
+        h = (urlparse(newurl).hostname or "").lower().rstrip(".")
+        if self.hops > SECTXT_MAX_REDIRECTS or not (
+                public_host(h)
+                and (h == self.orig or h.endswith("." + self.orig)
+                     or self.orig.endswith("." + h))):
+            raise HTTPError(newurl, code,
+                            "securitytxt redirect refused: %s" % h,
+                            headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers,
+                                        newurl)
 
 
 def parse_securitytxt(text):
@@ -425,12 +491,19 @@ def enrich_securitytxt(recs, limit, timeout):
         host = url_host(r.get("testing_policy_url") or r.get("url"))
         if host:
             hosts.setdefault(host, []).append(r)
-    stats = {"hosts_checked": 0, "found": 0, "expired": 0, "errors": 0}
+    stats = {"hosts_checked": 0, "found": 0, "expired": 0, "errors": 0,
+             "skipped": 0}
     for host, members in sorted(hosts.items())[:limit]:
+        if not public_host(host):
+            stats["skipped"] += 1
+            log.info("securitytxt skip non-public host %r", host)
+            continue
         surl = "https://%s%s" % (host, SECTXT_PATH)
+        opener = build_opener(SecTxtRedirect(host))
         stats["hosts_checked"] += 1
         try:
-            parsed = parse_securitytxt(fetch_text(surl, timeout))
+            parsed = parse_securitytxt(
+                fetch_text(surl, timeout, opener, SECTXT_MAX_BYTES))
         except Exception as e:
             stats["errors"] += 1
             log.info("securitytxt %s: %s", host, e)
