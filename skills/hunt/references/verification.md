@@ -471,3 +471,18 @@ behavior, the missing precondition). A lead that survives its own
 refutation attempt earns the gate slot; a lead that fails is recorded
 `Refuted` with the defeating check named — ruled-out leads land in the
 ledger as coverage, not silence.
+
+**Evidence must be replayable.** A SURVIVES verdict is only as good as
+the artifact it leaves: every refute/confirm claim must carry the exact
+command or call that produced it plus the captured output — RPC call +
+response, decoded tx hash + block, file:line + quoted code, request +
+response pair. "I checked and it holds" without a replayable artifact
+is a claim, not a verification — the next agent (or the program's
+triager) must be able to re-run the same check and see the same result.
+Store artifacts in `notes-<slice>.md` next to the verdict.
+
+**Verifier independence.** The refute pass on a finding runs under a
+different agent/context than the finder wherever possible — the finder's
+own frame is the bias being tested. Same-agent refutes are acceptable
+for fast triage but downgrade the confidence label one notch (high →
+medium) until an independent pass lands.
