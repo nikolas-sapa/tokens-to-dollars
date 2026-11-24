@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import subprocess
@@ -876,6 +878,119 @@ def update_snapshots(kept, snap_dir, run_ts):
     return trends, triggers
 
 
+# --- program ranking ---------------------------------------------------------
+# Reads an ingest-scope catalog (programs.json) and EV-ranks the PROGRAMS
+# themselves — which program is worth hunting, before any per-bounty ranking.
+
+def program_ev_factors(r):
+    """EV factors for a catalog program record -> {factor_name: multiplier}."""
+    f = {}
+    if r.get("safe_harbor") is True:
+        f["safe_harbor"] = 1.10
+    elif r.get("safe_harbor") is False:
+        f["safe_harbor"] = 0.80
+    scope = r.get("in_scope") or []
+    n_scope = len(scope)
+    n_wild = sum(1 for t in scope
+                 if "*" in str((t or {}).get("target", "")))
+    f["scope_breadth"] = round(min(1.30, 0.80 + n_scope * 0.02
+                                 + n_wild * 0.10), 3)
+    if r.get("offers_bounty") is False:
+        f["pay_flag"] = 0.30           # VDP-only: rep grind, not cash
+    elif r.get("offers_bounty") is True:
+        f["pay_flag"] = 1.00
+    else:
+        f["pay_flag"] = 0.85           # unknown; small discount
+    st = (r.get("policy_url_status") or "").lower()
+    sectxt = r.get("securitytxt") or {}
+    if st in ("dead", "gone", "404") or sectxt.get("expired") is True:
+        f["liveness"] = 0.40           # dead-program detector
+    elif st == "community-verified" or "community" in r.get("source", ""):
+        f["liveness"] = 1.05
+    else:
+        f["liveness"] = 1.00
+    fresh = r.get("fresh_scope_at") or r.get("launch_date")
+    d = days_since(fresh) if fresh else None
+    if d is not None and d <= 2:
+        f["freshness"] = 1.50          # <48h window: zero prior testing
+    elif d is not None and d <= 30:
+        f["freshness"] = 1.25
+    elif d is not None and d <= 90:
+        f["freshness"] = 1.10
+    else:
+        f["freshness"] = 1.00
+    excl = len(r.get("excluded_methods") or [])
+    if excl:
+        f["method_exclusions"] = round(max(0.7, 1.0 - excl * 0.03), 3)
+    return f
+
+
+def program_score(r):
+    payout = (r.get("max_payout") or {}).get("value") or 0
+    payout_n = min(1.0, math.log10(1 + payout) / 6)  # $1M+ saturates
+    facs = program_ev_factors(r)
+    mult = 1.0
+    for v in facs.values():
+        mult *= v
+    return round(100 * payout_n * mult, 2), facs
+
+
+def rank_programs(catalog_path, out_dir, min_scope=1):
+    """Score + rank catalog programs; write programs-ranked.{jsonl,tsv}."""
+    recs = json.loads(Path(catalog_path).read_text())
+    ranked = []
+    for r in recs:
+        if len(r.get("in_scope") or []) < min_scope:
+            continue
+        score, facs = program_score(r)
+        scope = r.get("in_scope") or []
+        ranked.append({
+            "rank_score": score,
+            "ev_factors": facs,
+            "platform": r.get("platform"),
+            "name": r.get("name"),
+            "handle": r.get("handle"),
+            "url": r.get("url"),
+            "max_payout": r.get("max_payout"),
+            "safe_harbor": r.get("safe_harbor"),
+            "offers_bounty": r.get("offers_bounty"),
+            "n_in_scope": len(scope),
+            "n_wildcards": sum(1 for t in scope
+                               if "*" in str((t or {}).get("target", ""))),
+            "n_out_of_scope": len(r.get("out_of_scope") or []),
+            "fresh_scope_at": r.get("fresh_scope_at"),
+            "launch_date": r.get("launch_date"),
+            "dead": bool((r.get("securitytxt") or {}).get("expired")
+                         or (r.get("policy_url_status") or "").lower()
+                         in ("dead", "gone", "404")),
+            "contact": {k: v for k, v in (r.get("contact") or {}).items()
+                        if v},
+            "policy_url_status": r.get("policy_url_status"),
+            "source": r.get("source"),
+            "scope_sample": [(t or {}).get("target") for t in scope[:5]],
+        })
+    ranked.sort(key=lambda x: -x["rank_score"])
+    for i, r in enumerate(ranked, 1):
+        r["rank"] = i
+    with open(out_dir / "programs-ranked.jsonl", "w") as f:
+        for r in ranked:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    with open(out_dir / "programs-ranked.tsv", "w", newline="") as f:
+        w = csv.writer(f, delimiter="\t", lineterminator="\n")
+        w.writerow(["rank", "score", "platform", "name", "max_payout",
+                    "safe_harbor", "n_scope", "wild", "fresh", "dead", "url"])
+        for r in ranked:
+            mp = r.get("max_payout") or {}
+            mp_s = "%s %s" % (mp.get("value"), mp.get("currency")) if mp else ""
+            w.writerow([r["rank"], r["rank_score"], r["platform"] or "",
+                        (r["name"] or "").replace("\t", " "), mp_s,
+                        {True: "yes", False: "no"}.get(r["safe_harbor"], ""),
+                        r["n_in_scope"], r["n_wildcards"],
+                        r["fresh_scope_at"] or r["launch_date"] or "",
+                        "dead" if r["dead"] else "", r["url"] or ""])
+    return len(ranked)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Aggregate funded bug bounties (GitHub issues, Immunefi, "
@@ -898,12 +1013,29 @@ def main():
     ap.add_argument("--teaser", action="store_true",
                     help="also write teaser.txt: ranked numbers with program "
                          "identity masked (shareable without leaking targets)")
+    ap.add_argument("--rank-programs", metavar="CATALOG.json",
+                    help="program-ranking mode: read an ingest-scope catalog "
+                         "(programs.json) and EV-rank the programs "
+                         "themselves; writes programs-ranked.{jsonl,tsv}")
+    ap.add_argument("--min-scope", type=int, default=1,
+                    help="min in_scope rows for --rank-programs (default 1)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s",
                         stream=sys.stderr)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.rank_programs:
+        try:
+            n = rank_programs(args.rank_programs, out_dir, args.min_scope)
+        except Exception as e:
+            log.error("rank-programs failed: %s", e)
+            return 1
+        log.info("ranked %d programs -> %s/programs-ranked.{jsonl,tsv}",
+                 n, out_dir)
+        return 0
+
     want = {s.strip().lower() for s in args.sources.split(",") if s.strip()}
 
     index = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

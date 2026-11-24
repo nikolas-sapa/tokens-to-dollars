@@ -52,6 +52,24 @@ GitHub hits: issue-timeline `linked_prs` counts (max 15 issues) and
 `repoBountyHistory` (closed `bounty in:title` issues => `verified-history`
 funding, max 10 repos).
 
+
+## Program ranking (--rank-programs)
+
+Reads an ingest-scope catalog (`programs.json`) and EV-ranks the programs
+themselves — which program is worth hunting before any per-bounty ranking:
+
+```
+python3 bounty_radar.py --rank-programs ../ingest-scope/out/programs.json --out-dir out
+```
+
+Score = `100 * log10(1+max_payout)/6 * factors`, where factors are
+`safe_harbor` (1.10/0.80), `scope_breadth` (rows + wildcards), `pay_flag`
+(VDP-only x0.30), `liveness` (dead security.txt/policy x0.40), `freshness`
+(<48h scope change or launch x1.50, <30d x1.25, <90d x1.10),
+`method_exclusions` (-3% per excluded method). Writes
+`programs-ranked.jsonl` (full record + ev_factors + contact + scope_sample)
+and `programs-ranked.tsv`. `--min-scope N` drops thin catalogs entries.
+
 ## Outputs
 
 - `bounties.jsonl` — one record per line, value-ranked:
