@@ -11,3 +11,8 @@ findings.md
 plan.md
 progress.md
 task_plan.md
+reports/
+evidence/
+payloads/
+*.quarantine.jsonl
+docs/self-audit-*.md

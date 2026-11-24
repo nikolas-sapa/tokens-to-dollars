@@ -15,3 +15,7 @@ __pycache__/
 # Working planning files
 task_plan.md
 progress.md
+out/
+evidence/
+payloads/
+*.quarantine.jsonl
