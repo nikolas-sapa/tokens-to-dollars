@@ -78,17 +78,41 @@ Not extracted (deliberately, would over-match or is unknowable):
 | `ffuf` | `-json` | `-rate` | `-u`, `-request` (file) |
 | `trufflehog` | `--json` | none (`--rate` warns) | positional URLs + existing positional files (scanned) |
 | `dnsx` | `-json` | `-rl` | `-d`/`-domain`, `-l`/`-list` (file), stdin |
+| `gau` | `--json` | none (`--rate` warns) | positional domains, stdin |
+| `waybackurls` | none — plain URLs parsed to `asset-url` records | none | positional domain, stdin |
+| `arjun` | `-oJ <tmp>` (parsed after run) | `--ratelimit` | `-u`, `-i` (file: burp/text/raw-request) |
+| `x8` | `-o <tmp> -O json` (parsed after run) | `-d` (`--rate N` → 1000/N ms delay) | `-u`/`--url` (URLs or list files), `-r`/`--request` (file) |
+| `subzy` | none — `[ STATUS ]` console rows parsed | none | `--target`/`--targets` (comma list or file) |
+| `wafw00f` | `-o <tmp> -f json` (parsed after run) | none | positional URLs, `-i`/`--input` (file) |
+| `naabu-passive` | `-json` + forced `-passive` | none | `-host` (comma list), `-l`/`-list` (file) |
 
 The JSON flag is skipped when you already passed an output-format flag
 (`-json`, `-jsonl`, `--json`, `-oJ`, `-j`); the tool then emits its own
 format and non-JSON lines pass through raw.
 
+`naabu-passive` is an alias, not the scanner: it execs `naabu` with
+`-passive` forced (OSINT port intel only). Port-scan flags — `-p`,
+`-ports`, `-top-ports`, `-exclude-ports`/`-ep`, `-scan-type`/`-s`, `-nmap`,
+`-interface`/`-it`, `-source-ip` — are refused with exit 3. Active `naabu`
+is intentionally not registered; `wrap.py naabu` is an unknown tool.
+
+Missing binaries soft-skip the existing way: exit 127 plus an install hint,
+never a hard crash.
+
 ## Output shape
 
 Each stdout line: JSON-parseable → `{"tool": "<name>", "line": <parsed
 object>}`; anything else → passthrough (or `{"tool": ..., "line": "<raw>"}`
-under `--json`). Tool stderr streams to your stderr untouched. Exit code is
+under `--json`). Tools with a normalizer emit `{"tool": "<name>",
+"record": {...}}` instead — `kind` is `asset-url` (gau/waybackurls),
+`params` (arjun/x8), `takeover` (subzy), `waf` (wafw00f), or `open-port`
+(naabu-passive). Tool stderr streams to your stderr untouched. Exit code is
 the tool's own.
+
+Endpoint-bearing records feed the asset graph. Endpoint nodes should carry
+`method`, `params`, `auth_required`, `state_changing` fields — wrappers
+fill `method`/`params` and emit `auth_required`/`state_changing` as `null`
+for downstream probing to populate, never guessed.
 
 ## Exit codes
 

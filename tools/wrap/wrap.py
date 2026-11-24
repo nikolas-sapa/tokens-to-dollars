@@ -20,11 +20,20 @@ import sys
 import tempfile
 
 # Per tool: json = flag that makes it emit JSON/JSONL on stdout,
-# rate = flag enforcing a req/sec cap, tflags = target-bearing flags
-# ("host" = value is a target, "file" = value is a file of targets or a
-# raw request carrying Host:/Referer: headers), posfile = positional args
-# that are existing files are also scanned for targets (trufflehog),
-# install = hint printed when the binary is missing.
+# rate = flag enforcing a req/sec cap, rate_ms = flag enforcing a
+# milliseconds-between-requests delay (--rate N -> 1000/N ms), tflags =
+# target-bearing flags ("host" = value is a target or comma-list of targets,
+# "file" = value is a file of targets or a raw request carrying
+# Host:/Referer: headers, "hostfile" = value is a file when it exists on
+# disk else a target), posfile = positional args that are existing files
+# are also scanned for targets (trufflehog), bin = real binary name when
+# the registered alias differs (naabu-passive -> naabu), force = flags
+# always injected (naabu-passive's -passive), deny_flags = flags refused
+# outright (port-scan args on the passive-only alias), outfile = spec for
+# tools whose JSON lands in a file not on stdout: {flag, args, skip} —
+# when the user set no flag in skip we write flag <tmpfile> + args and
+# parse the file into records after the run, install = hint printed when
+# the binary is missing.
 TOOLS = {
     "subfinder": {"json": "-json", "rate": "-rl",
                   "tflags": {"-d": "host", "-domain": "host", "-dL": "file"},
@@ -48,7 +57,193 @@ TOOLS = {
     "dnsx": {"json": "-json", "rate": "-rl",
              "tflags": {"-d": "host", "-domain": "host", "-l": "file", "-list": "file"},
              "install": "go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest"},
+    # archive URL collectors — passive, target via positional domain or stdin
+    "gau": {"json": "--json", "rate": None,
+            "tflags": {},
+            "install": "go install github.com/lc/gau/v2/cmd/gau@latest"},
+    "waybackurls": {"json": None, "rate": None,
+                    "tflags": {},
+                    "install": "go install github.com/tomnomnom/waybackurls@latest"},
+    # hidden-parameter discovery (active)
+    "arjun": {"json": None, "rate": "--ratelimit",
+              "tflags": {"-u": "host", "-i": "file"},
+              "outfile": {"flag": "-oJ", "args": [],
+                          "skip": {"-oJ", "-oT", "-oB"}},
+              "install": "pip3 install arjun"},
+    "x8": {"json": None, "rate_ms": "-d",
+           "tflags": {"-u": "hostfile", "--url": "hostfile",
+                      "-r": "file", "--request": "file"},
+           "outfile": {"flag": "-o", "args": ["-O", "json"],
+                       "skip": {"-o", "--output", "-O", "--output-format"}},
+           "install": "cargo install x8"},
+    # subdomain-takeover and WAF checks
+    "subzy": {"json": None, "rate": None,
+              "tflags": {"--target": "host", "-target": "host",
+                         "--targets": "hostfile", "-targets": "hostfile"},
+              "install": "go install -v github.com/PentestPad/subzy@latest"},
+    "wafw00f": {"json": None, "rate": None,
+                "tflags": {"-i": "file", "--input": "file",
+                           "--input-file": "file"},
+                "outfile": {"flag": "-o", "args": ["-f", "json"],
+                            "skip": {"-o", "--output", "-f", "--format"}},
+                "install": "pip3 install wafw00f"},
+    # naabu passive alias — OSINT port intel only; the active port scanner
+    # stays gated (unknown tool here, run it outside wrap or via a manifest
+    # gate that is not this one)
+    "naabu-passive": {"bin": "naabu", "json": "-json", "rate": None,
+                      "force": ["-passive"],
+                      "deny_flags": {"-p", "-ports", "-top-ports",
+                                     "-exclude-ports", "-ep", "-scan-type",
+                                     "-s", "-nmap", "-interface", "-it",
+                                     "-source-ip"},
+                      "tflags": {"-host": "host", "--host": "host",
+                                 "-l": "file", "-list": "file",
+                                 "--list": "file"},
+                      "install": "go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"},
 }
+
+# Line parsers: one raw stdout line -> normalized record dict or None.
+# File parsers: whole outfile text -> list of record dicts. Records print as
+# {"tool": <name>, "record": {...}} — the fleet's asset-graph ingest shape.
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+SUBZY_RE = re.compile(r"^\[\s*([A-Za-z _-]+?)\s*\]\s*-?\s*(\S+)(?:\s*-\s*(.*))?$")
+
+
+def _rec(kind, **kw):
+    d = {"kind": kind}
+    d.update({k: v for k, v in kw.items() if v is not None})
+    return d
+
+
+def parse_urlish_line(line):
+    """gau / waybackurls: bare URL per line, `ts url` under -dates, or gau
+    --json objects {"url": ..., "provider": ...}."""
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        obj = None
+    if isinstance(obj, dict):
+        u = obj.get("url") or obj.get("uri")
+        if not u:
+            return None
+        rec = _rec("asset-url", url=u)
+        for k in ("provider", "source", "date"):
+            if obj.get(k):
+                rec[k] = obj[k]
+        return rec
+    s = line.strip()
+    if not s or s[0] in "[{]}":
+        return None
+    parts = s.split(None, 1)
+    if len(parts) == 2 and parts[1].startswith(("http://", "https://")):
+        return _rec("asset-url", url=parts[1], fetched=parts[0])
+    if s.startswith(("http://", "https://")) or HOST_RE.fullmatch(s):
+        return _rec("asset-url", url=s)
+    return None
+
+
+def parse_subzy_line(line):
+    """subzy console rows: `[ STATUS ] - host - detail`; banner/config rows
+    (`[ Yes ] HTTPS by default`, `[ 10 ] Concurrent requests`) are filtered
+    by the host check."""
+    s = ANSI_RE.sub("", line).strip()
+    m = SUBZY_RE.match(s)
+    if not m:
+        return None
+    status, host, detail = m.group(1).strip(), m.group(2), (m.group(3) or "").strip()
+    if not (host_of(host) or HOST_RE.fullmatch(host)):
+        return None
+    return _rec("takeover", host=host, status=status.lower(),
+                detail=detail or None)
+
+
+def parse_naabu_line(line):
+    """naabu -json rows: {"host": ..., "ip": ..., "port": n}."""
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    host, port = obj.get("host"), obj.get("port")
+    if host is None and port is None:
+        return None
+    return _rec("open-port", host=host, ip=obj.get("ip"), port=port)
+
+
+def _param_names(params):
+    if isinstance(params, dict):
+        return sorted(params)
+    out = []
+    for p in params or []:
+        n = p.get("name") if isinstance(p, dict) else p
+        if n:
+            out.append(n)
+    return sorted(set(out))
+
+
+def _params_record(url, method, params, status=None):
+    rec = _rec("params", url=url, method=method, params=params, status=status)
+    # asset-graph endpoint-node shape; wrapper fills method/params, the
+    # rest is filled by downstream probing, never guessed
+    rec.setdefault("auth_required", None)
+    rec.setdefault("state_changing", None)
+    return rec
+
+
+def parse_arjun_file(text):
+    """arjun -oJ: {url: {"method": ..., "params": {...}}, ...}"""
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return []
+    out = []
+    for url, data in obj.items() if isinstance(obj, dict) else []:
+        if not isinstance(data, dict):
+            continue
+        out.append(_params_record(url, data.get("method"),
+                                  _param_names(data.get("params"))))
+    return out
+
+
+def parse_x8_file(text):
+    """x8 -O json: [{method, url, status, found_params: [{name, ...}]}]"""
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return []
+    items = obj if isinstance(obj, list) else [obj]
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        out.append(_params_record(it.get("url"), it.get("method"),
+                                  _param_names(it.get("found_params")),
+                                  status=it.get("status")))
+    return out
+
+
+def parse_wafw00f_file(text):
+    """wafw00f -f json: [{url, detected, firewall, manufacturer}]"""
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return []
+    items = obj if isinstance(obj, list) else [obj]
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        out.append(_rec("waf", url=it.get("url"), detected=it.get("detected"),
+                        firewall=it.get("firewall"),
+                        manufacturer=it.get("manufacturer")))
+    return out
+
+
+LINE_PARSERS = {"gau": parse_urlish_line, "waybackurls": parse_urlish_line,
+                "subzy": parse_subzy_line, "naabu-passive": parse_naabu_line}
+FILE_PARSERS = {"arjun": parse_arjun_file, "x8": parse_x8_file,
+                "wafw00f": parse_wafw00f_file}
 
 # User already chose an output format -> don't inject ours.
 JSONY_FLAGS = {"-json", "-jsonl", "--json", "-oJ", "-j"}
@@ -189,6 +384,17 @@ def file_hosts(path):
     return out
 
 
+def hosts_in(val):
+    """A flag value may carry a comma-separated host list (naabu -host,
+    subzy --target/--targets); hosts themselves never contain commas."""
+    out = []
+    for part in val.split(","):
+        h = host_of(part)
+        if h:
+            out.append(h)
+    return out
+
+
 def extract_targets(tdef, args, stdin_text):
     """Every host the wrapped tool is about to touch: known target-flag
     values (space- or =joined), the files they point at, =joined values on
@@ -214,10 +420,17 @@ def extract_targets(tdef, args, stdin_text):
                     cands += file_hosts(val)
                 except OSError as e:
                     unreadable.append("%s %r: %s" % (flag, val, e))
+            elif kind == "hostfile":
+                # x8 -u and subzy --targets take URLs/hosts OR a list file
+                if os.path.isfile(val):
+                    try:
+                        cands += file_hosts(val)
+                    except OSError as e:
+                        unreadable.append("%s %r: %s" % (flag, val, e))
+                else:
+                    cands += hosts_in(val)
             else:
-                h = host_of(val)
-                if h:
-                    cands.append(h)
+                cands += hosts_in(val)
         elif a.startswith("-"):
             # unknown flag: only an =joined value can still smuggle a target
             # (--opt=https://evil.com); space-separated next args land in the
@@ -249,11 +462,32 @@ def extract_targets(tdef, args, stdin_text):
     return cands, saw_targetish, unreadable
 
 
-def emit(tool, line, wrap_all):
+def emit(tool, line, wrap_all, parser=None):
+    rec = parser(line) if parser else None
+    if rec is not None:
+        print(json.dumps({"tool": tool, "record": rec}, sort_keys=True))
+        return
     try:
         print(json.dumps({"tool": tool, "line": json.loads(line)}))
     except ValueError:
         print(json.dumps({"tool": tool, "line": line}) if wrap_all else line)
+
+
+def emit_outfile(tool, path):
+    """Parse the tool's JSON output file into normalized records."""
+    parser = FILE_PARSERS.get(tool)
+    if parser is None:
+        return []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError as e:
+        warn("cannot read %s output file %s: %s" % (tool, path, e))
+        return []
+    recs = parser(text)
+    if not recs:
+        warn("%s wrote no parseable results to %s" % (tool, path))
+    return recs
 
 
 def main(argv):
@@ -324,20 +558,41 @@ def main(argv):
         return die(3, "%d distinct targets exceeds --budget %d"
                    % (len(set(cands)), wa.budget))
 
-    exe = shutil.which(tool)
+    deny = tdef.get("deny_flags") or set()
+    bad = sorted(a.split("=")[0] for a in tool_args
+                 if a.split("=")[0] in deny)
+    if bad:
+        return die(3, "%s is passive-only; port-scan flag(s) gated: %s"
+                   % (tool, ", ".join(bad)))
+
+    exe = shutil.which(tdef.get("bin") or tool)
     if exe is None:
         return die(127, "%r not found on PATH\nwrap: install: %s"
-                   % (tool, tdef["install"]))
+                   % (tdef.get("bin") or tool, tdef["install"]))
 
-    final = [exe] + tool_args
+    final = [exe]
+    for f in tdef.get("force") or ():
+        if not any(a == f or a.startswith(f + "=") for a in tool_args):
+            final.append(f)
+    final += tool_args
     if tdef["json"] and not any(a.split("=")[0] in JSONY_FLAGS for a in tool_args):
         final.append(tdef["json"])
     rate = wa.rate or (manifest or {}).get("rps_cap")
     if rate:
-        if tdef["rate"] and not any(a.split("=")[0] == tdef["rate"] for a in tool_args):
+        if tdef.get("rate") and not any(a.split("=")[0] == tdef["rate"] for a in tool_args):
             final += [tdef["rate"], str(rate)]
-        elif not tdef["rate"]:
+        elif tdef.get("rate_ms") and not any(a.split("=")[0] == tdef["rate_ms"] for a in tool_args):
+            # x8 & co take a milliseconds-between-requests delay, not req/sec
+            final += [tdef["rate_ms"], str(max(1, int(1000 / rate)))]
+        elif not tdef.get("rate") and not tdef.get("rate_ms"):
             warn("%s has no rate-limit flag; cap %s not enforced" % (tool, rate))
+
+    ofile = None
+    ospec = tdef.get("outfile")
+    if ospec and not any(a.split("=")[0] in ospec["skip"] for a in tool_args):
+        fd, ofile = tempfile.mkstemp(prefix="wrap-%s-" % tool, suffix=".json")
+        os.close(fd)
+        final += [ospec["flag"], ofile] + list(ospec.get("args") or [])
 
     tmp = None
     try:
@@ -349,9 +604,15 @@ def main(argv):
             stdin = tmp
         proc = subprocess.Popen(final, stdin=stdin, stdout=subprocess.PIPE,
                                 universal_newlines=True, errors="replace")
+        parser = LINE_PARSERS.get(tool)
         for raw in proc.stdout:
-            emit(tool, raw.rstrip("\n"), wa.json)
-        return proc.wait()
+            emit(tool, raw.rstrip("\n"), wa.json, parser)
+        rc = proc.wait()
+        if ofile:
+            for rec in emit_outfile(tool, ofile):
+                print(json.dumps({"tool": tool, "record": rec},
+                                 sort_keys=True))
+        return rc
     except BrokenPipeError:
         return proc.wait()
     except OSError as e:

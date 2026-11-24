@@ -3,16 +3,45 @@ import argparse
 import difflib
 import hashlib
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
-UA = "tokens-to-dollars-change-detect/1.0 (authorized-scope-only)"
+UA = "tokens-to-dollars-change-detect/1.1 (authorized-scope-only)"
 TIMEOUT = 30
 TEXT_HINTS = ("text/", "json", "xml", "javascript", "ecmascript", "html", "csv")
+
+# add <url> [kind] — kind tags let the orchestrator map a trigger to an
+# action without re-classifying the watch ("generic" = untagged)
+WATCH_KINDS = ("js", "schema", "changelog", "fingerprint", "generic")
+
+FEED_KEYWORDS = re.compile(
+    r"auth|payment|admin|token|session|oauth|upload|billing|permission", re.I)
+CT_LABELS = ("api", "staging", "admin", "dev", "beta")
+DOMAIN_RE = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+# Don't-wake gate: a trigger fires only when the change introduces a new
+# deploy-shaped token. Sets are diffed (new - old), so minified bundles work.
+TOK_HOST = re.compile(r"https?://([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,63})", re.I)
+TOK_ENDPOINT = re.compile(
+    r"[\"'`]((?:/(?:api|v\d+|graphql|rpc|internal|admin|auth)[\w./{}$~-]*)"
+    r"|(?:/[\w$~-]+){2,}/?)[\"'`]")
+TOK_ASSET = re.compile(
+    r"[\"'\(\s]((?:https?:)?//[\w.-]+/[\w./~-]*\.(?:js|mjs|json|wasm)"
+    r"|(?:/[\w.~-]+)+\.(?:js|mjs|json|wasm))[\"'\)\s]")
+TOK_VERSION = re.compile(r"\bv?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?\b", re.I)
+TOK_BUILD = re.compile(
+    r"(?:version|build|commit|revision|release)[\"'\s]*[:=][\"'\s]*[\w.-]{3,}", re.I)
+# CSS/media/.map/status-text never wakes: tokens ending in these are dropped,
+# and pure text churn yields no tokens at all.
+NOISE_PATH = re.compile(
+    r"\.(css|map|png|jpe?g|gif|svg|webp|ico|avif|woff2?|ttf|eot|otf"
+    r"|mp4|webm|mp3|wav|pdf|txt|xml)$", re.I)
 
 
 def utcnow():
@@ -35,6 +64,17 @@ def save_state(tdir, st):
 
 def url_key(url):
     return hashlib.sha256(url.encode()).hexdigest()[:16]
+
+
+def emit_trigger(tdir, rec):
+    """Append one trigger line to triggers.jsonl; ts is stamped here so every
+    producer emits the same {kind, url, signal, ts} envelope."""
+    rec = dict(rec)
+    rec["ts"] = utcnow()
+    Path(tdir).mkdir(parents=True, exist_ok=True)
+    with (Path(tdir) / "triggers.jsonl").open("a") as f:
+        f.write(json.dumps(rec, sort_keys=True) + "\n")
+    return rec
 
 
 def host_allowed(url, allowed):
@@ -94,37 +134,71 @@ def store_bodies(tdir, url, body, changed):
     cur.write_bytes(body)
 
 
+def signal_tokens(text):
+    """Deploy-shaped tokens in a body. Media/.map/css paths are noise and
+    never count; pure text churn yields no tokens."""
+    toks = {"new-host": {m.group(1).lower() for m in TOK_HOST.finditer(text)},
+            "new-endpoint": set(), "new-asset-url": set(), "version-bump": set()}
+    for m in TOK_ENDPOINT.finditer(text):
+        p = m.group(1)
+        if not NOISE_PATH.search(p):
+            toks["new-endpoint"].add(p)
+    for m in TOK_ASSET.finditer(text):
+        a = m.group(1)
+        if not NOISE_PATH.search(a):
+            toks["new-asset-url"].add(a)
+    toks["version-bump"] = {m.group(0) for m in TOK_VERSION.finditer(text)}
+    toks["version-bump"] |= {m.group(0) for m in TOK_BUILD.finditer(text)}
+    return toks
+
+
+def detect_signals(old, new):
+    """Token-set delta old -> new. Returns {signal: [sample tokens]}."""
+    o, n = signal_tokens(old), signal_tokens(new)
+    return {k: sorted(n[k] - o[k])[:3] for k in n if n[k] - o[k]}
+
+
 def do_add(a):
     scheme = urlparse(a.url).scheme.lower()
     if scheme not in ("http", "https"):
         sys.exit("error: only http(s) URLs are watchable, got %s" % a.url)
     st = load_state(a.target)
-    if a.url in st["watches"]:
-        print(json.dumps({"ok": True, "already_watched": True, "url": a.url}))
+    w = st["watches"].get(a.url)
+    if w is not None:
+        # re-add with an explicit kind retags; bare `add` never downgrades
+        if a.kind != "generic" and w.get("kind") != a.kind:
+            w["kind"] = a.kind
+            save_state(a.target, st)
+        print(json.dumps({"ok": True, "already_watched": True,
+                          "url": a.url, "kind": w.get("kind", "generic")}))
         return 0
-    st["watches"][a.url] = {"added": utcnow(), "sha256": None, "last_checked": None,
-                            "status": "registered"}
+    st["watches"][a.url] = {"added": utcnow(), "kind": a.kind, "sha256": None,
+                            "last_checked": None, "status": "registered"}
     save_state(a.target, st)
-    print(json.dumps({"ok": True, "url": a.url}))
+    print(json.dumps({"ok": True, "url": a.url, "kind": a.kind}))
     return 0
 
 
-def write_changes_md(tdir, results, run_ts):
+def write_changes_md(tdir, results, run_ts, triggers):
     counts = {"changed": 0, "unchanged": 0, "baseline": 0, "error": 0}
     for r in results.values():
         counts[r["result"]] = counts.get(r["result"], 0) + 1
     out = ["# changes — %s" % run_ts, "",
            "changed: %d   baseline: %d   unchanged: %d   error: %d"
            % (counts["changed"], counts["baseline"], counts["unchanged"], counts["error"]),
-           "", "| url | result | sha256 | detail |", "|---|---|---|---|"]
+           "", "| url | result | kind | sha256 | detail |", "|---|---|---|---|---|"]
     for url in sorted(results):
         r = results[url]
-        out.append("| %s | %s | %s | %s |"
-                   % (url, r["result"], (r.get("sha256") or "-")[:12],
-                      r.get("error") or ("bytes=%s" % r.get("bytes") if r.get("bytes") is not None else "-")))
+        detail = r.get("error") or r.get("gated") \
+            or ("bytes=%s" % r.get("bytes") if r.get("bytes") is not None else "-")
+        out.append("| %s | %s | %s | %s | %s |"
+                   % (url, r["result"], r.get("kind") or "-",
+                      (r.get("sha256") or "-")[:12], detail))
     changed = [u for u, r in sorted(results.items()) if r["result"] == "changed"]
     out += ["", "## new-wave candidates"]
     out += ["- %s" % u for u in changed] or ["- none"]
+    out += ["", "## triggers (also appended to triggers.jsonl)"]
+    out += ["- `%s`" % json.dumps(t, sort_keys=True) for t in triggers] or ["- none"]
     (Path(tdir) / "changes.md").write_text("\n".join(out) + "\n")
 
 
@@ -134,36 +208,74 @@ def do_check(a):
         sys.exit("error: no watches registered — add <url> first")
     opener = urllib.request.build_opener(AllowlistRedirect(a.only_host))
     results = {}
+    triggers = []
+    bdir = Path(a.target) / "bodies"
     for url in sorted(st["watches"]):
         w = st["watches"][url]
+        kind = w.get("kind", "generic")
         if not host_allowed(url, a.only_host):
-            results[url] = {"result": "error",
+            results[url] = {"result": "error", "kind": kind,
                             "error": "host %s not in --only-host allowlist" % urlparse(url).hostname}
             continue
         try:
             meta, body = fetch(url, opener)
         except Exception as e:
             w.update({"last_checked": utcnow(), "status": "error"})
-            results[url] = {"result": "error", "error": "%s: %s" % (type(e).__name__, e)}
+            results[url] = {"result": "error", "kind": kind,
+                            "error": "%s: %s" % (type(e).__name__, e)}
             continue
         digest = hashlib.sha256(body).hexdigest()
         prev = w.get("sha256")
         result = "unchanged" if prev == digest else ("baseline" if prev is None else "changed")
-        if a.store_bodies and (result != "unchanged" or not (Path(a.target) / "bodies" / (url_key(url) + ".cur")).exists()):
+        cur = bdir / (url_key(url) + ".cur")
+        if result == "changed":
+            # Don't-wake gate: a diff of the stored bodies must yield a new
+            # endpoint/asset-url/version/host token, else it's content churn.
+            old_text = None
+            if cur.is_file():
+                old_text = decode_body(cur.read_bytes(), w.get("content_type"))
+            if old_text is not None:
+                sig = detect_signals(old_text,
+                                     decode_body(body, meta["content_type"]))
+                if sig:
+                    triggers.append(emit_trigger(
+                        a.target, {"kind": kind, "url": url,
+                                   "signal": sorted(sig), "evidence": sig}))
+                    results_sig = ",".join(sorted(sig))
+                else:
+                    results[url] = {"gated": "no deploy signal (content-only change)"}
+                    results_sig = None
+            elif kind != "generic":
+                # no stored body to diff: a tagged watch's hash change is the
+                # coarse signal; run with --store-bodies for a precise gate
+                triggers.append(emit_trigger(
+                    a.target, {"kind": kind, "url": url,
+                               "signal": ["content-hash-changed"]}))
+                results_sig = "content-hash-changed"
+            else:
+                results_sig = None
+        else:
+            results_sig = None
+        if a.store_bodies and (result != "unchanged" or not cur.exists()):
             store_bodies(a.target, url, body, changed=(result == "changed"))
         w.update({"sha256": digest, "last_checked": utcnow(), "status": result,
                   "content_type": meta["content_type"], "bytes": len(body),
                   "etag": meta.get("head", {}).get("etag"),
                   "last_modified": meta.get("head", {}).get("last_modified")})
-        results[url] = {"result": result, "sha256": digest, "bytes": len(body),
-                        "head_status": meta.get("head", {}).get("status"),
-                        "head_error": meta.get("head_error")}
+        r = results.setdefault(url, {})
+        r.update({"result": result, "kind": kind, "sha256": digest,
+                  "bytes": len(body),
+                  "head_status": meta.get("head", {}).get("status"),
+                  "head_error": meta.get("head_error")})
+        if results_sig:
+            r["signals"] = results_sig
     st["last_run"] = utcnow()
     save_state(a.target, st)
-    write_changes_md(a.target, results, st["last_run"])
+    write_changes_md(a.target, results, st["last_run"], triggers)
     print(json.dumps({"target": str(a.target), "run": st["last_run"],
                       "checked": len(results),
                       "changed": sum(1 for r in results.values() if r["result"] == "changed"),
+                      "triggers": len(triggers),
                       "errors": sum(1 for r in results.values() if r["result"] == "error"),
                       "results": results}, indent=2))
     return 0
@@ -197,24 +309,156 @@ def do_diff(a):
     return 0
 
 
+def do_poll_ct(a):
+    """crt.sh poll: new cert-log names for the domain -> new-subdomain triggers.
+    The queried domain must itself be named by --only-host; only the crt.sh
+    HTTP host is fetched, redirects off it refused."""
+    domain = a.domain.strip().lower().strip(".")
+    if not DOMAIN_RE.match(domain):
+        sys.exit("error: not a domain: %s" % a.domain)
+    if not host_allowed("https://" + domain, a.only_host):
+        sys.exit("error: %s not in --only-host allowlist" % domain)
+    url = "https://crt.sh/?q=%s&output=json" % quote("%." + domain, safe="")
+    opener = urllib.request.build_opener(AllowlistRedirect(["crt.sh"]))
+    try:
+        with opener.open(urllib.request.Request(url, headers={"User-Agent": UA}),
+                         timeout=TIMEOUT) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        sys.exit("error: crt.sh query failed: %s: %s" % (type(e).__name__, e))
+    names = set()
+    for row in data if isinstance(data, list) else []:
+        for n in str(row.get("name_value") or "").splitlines():
+            n = n.strip().lower().lstrip("*.")
+            if n == domain or n.endswith("." + domain):
+                names.add(n)
+    st = load_state(a.target)
+    seen = set(st.setdefault("ct_seen", {}).get(domain, []))
+    new = sorted(names - seen)
+    st["ct_seen"][domain] = sorted(seen | names)
+    st["ct_last_run"] = utcnow()
+    save_state(a.target, st)
+    for n in new:
+        rec = {"kind": "new-subdomain", "url": n, "signal": ["ct-log"]}
+        if any(lbl == p or lbl.startswith(p) for lbl in n.split(".") for p in CT_LABELS):
+            rec["priority"] = "high"
+        emit_trigger(a.target, rec)
+    print(json.dumps({"domain": domain, "seen_total": len(seen | names),
+                      "new": new,
+                      "priority": [n for n in new
+                                   if any(lbl == p or lbl.startswith(p)
+                                          for lbl in n.split(".") for p in CT_LABELS)]},
+                     indent=2))
+    return 0
+
+
+def _local(tag):
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def _child_text(el, name):
+    for c in el:
+        if _local(c.tag) == name:
+            return (c.text or "").strip() or None
+    return None
+
+
+def _child_link(el):
+    for c in el:
+        if _local(c.tag) == "link":
+            return c.get("href") or (c.text or "").strip() or None
+    return None
+
+
+def parse_feed(body):
+    """Atom <entry> and RSS <item> -> {id, title, link, summary}, namespace-
+    agnostic. Unparseable feeds yield []."""
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return []
+    out = []
+    for el in root.iter():
+        if _local(el.tag) not in ("entry", "item"):
+            continue
+        title = _child_text(el, "title") or ""
+        link = _child_link(el)
+        eid = (_child_text(el, "id") or _child_text(el, "guid")
+               or link or title)
+        summary = (_child_text(el, "summary") or _child_text(el, "description")
+                   or _child_text(el, "content") or "")
+        if eid:
+            out.append({"id": eid, "title": title, "link": link,
+                        "summary": summary})
+    return out
+
+
+def do_poll_feed(a):
+    """Release/changelog feed poll: new entries are deduped in state.json;
+    only keyword-gated entries (auth|payment|admin|token|session|oauth|
+    upload|billing|permission) emit kind:changelog triggers."""
+    if not host_allowed(a.url, a.only_host):
+        sys.exit("error: host %s not in --only-host allowlist"
+                 % (urlparse(a.url).hostname or a.url))
+    opener = urllib.request.build_opener(AllowlistRedirect(a.only_host))
+    try:
+        meta, body = fetch(a.url, opener)
+    except Exception as e:
+        sys.exit("error: feed fetch failed: %s: %s" % (type(e).__name__, e))
+    entries = parse_feed(body)
+    st = load_state(a.target)
+    feeds = st.setdefault("feeds", {})
+    seen = set(feeds.get(a.url, []))
+    new = [e for e in entries if e["id"] not in seen]
+    hits = []
+    for e in new:
+        kws = sorted({k.lower() for k in
+                      FEED_KEYWORDS.findall(e["title"] + " " + e["summary"])})
+        if not kws:
+            continue
+        hits.append(emit_trigger(a.target, {
+            "kind": "changelog", "url": a.url,
+            "signal": ["keyword:" + k for k in kws],
+            "entry": (e["title"] or "")[:160], "link": e["link"]}))
+    feeds[a.url] = sorted(seen | {e["id"] for e in entries})
+    st["feed_last_run"] = utcnow()
+    save_state(a.target, st)
+    print(json.dumps({"feed": a.url, "entries": len(entries),
+                      "new_entries": len(new), "triggers": hits}, indent=2))
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Commit-triggered change detector: watch URLs, report what moved "
                     "(feeds the orchestrator's unfinished-chains-first + new-wave triggers).")
-    ap.add_argument("--target", required=True, help="state dir (state.json, bodies/, changes.md)")
+    ap.add_argument("--target", required=True, help="state dir (state.json, bodies/, changes.md, triggers.jsonl)")
     ap.add_argument("--store-bodies", action="store_true",
-                    help="keep last/current bodies so diff can render unified diffs")
+                    help="keep last/current bodies so diff can render unified diffs "
+                         "and the don't-wake gate can extract deploy signals")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("add", help="register a watch URL (no fetch)")
     p.add_argument("url")
-    p = sub.add_parser("check", help="refetch all watches; JSON to stdout + changes.md")
+    p.add_argument("kind", nargs="?", choices=WATCH_KINDS, default="generic",
+                   help="watch class the orchestrator maps to an action "
+                        "(default generic; re-add with a kind to retag)")
+    p = sub.add_parser("check", help="refetch all watches; JSON to stdout + changes.md + triggers.jsonl")
     p.add_argument("--only-host", action="append", required=True, metavar="HOST",
                    help="exact host allowed to be fetched; repeatable. Required — no allowlist, no traffic")
+    p = sub.add_parser("poll-ct", help="crt.sh cert-log poll: new subdomains -> triggers.jsonl")
+    p.add_argument("domain", help="apex domain to query as %%.domain")
+    p.add_argument("--only-host", action="append", required=True, metavar="HOST",
+                   help="the queried domain must appear here (repeatable)")
+    p = sub.add_parser("poll-feed", help="atom/rss changelog poll: keyword-gated entries -> triggers.jsonl")
+    p.add_argument("url", help="releases.atom / changelog feed URL")
+    p.add_argument("--only-host", action="append", required=True, metavar="HOST",
+                   help="exact host allowed to be fetched; repeatable")
     sub.add_parser("diff", help="unified diff of stored bodies (needs --store-bodies checks)")
     args = ap.parse_args()
 
-    return {"add": do_add, "check": do_check, "diff": do_diff}[args.cmd](args)
+    return {"add": do_add, "check": do_check, "diff": do_diff,
+            "poll-ct": do_poll_ct, "poll-feed": do_poll_feed}[args.cmd](args)
 
 
 if __name__ == "__main__":

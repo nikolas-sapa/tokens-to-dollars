@@ -63,7 +63,9 @@ unauthenticated at low rate (honors `GH_TOKEN`); every source fails soft.
 ## wrap
 
 `wrap/` holds thin CLI adapters around best-in-class open tools —
-subfinder, httpx, nuclei, katana, trufflehog, ffuf, and friends. The rule is
+subfinder, httpx, nuclei, katana, trufflehog, ffuf, dnsx, gau, waybackurls,
+arjun, x8, subzy, wafw00f, and naabu-passive (the OSINT `-passive` mode only;
+active port scanning stays unwrapped). The rule is
 *wrap atomic tools, never reinvent*: each adapter does exactly three things —
 translate our normalized input (scope rows, target lists) into the tool's
 native flags/config, invoke the binary with sane defaults and hard rate
@@ -191,14 +193,19 @@ late writes are refused. `status`/`stale` show the derived state; `export
 ## change-detect
 
 `change-detect/detect.py --target <dir>` is the commit-triggered wave
-detector: `add` registers watch URLs that move when a target ships (JS
-bundles, API schemas, changelogs, security.txt); `check` refetches them all —
+detector: `add <url> [js|schema|changelog|fingerprint]` registers kind-tagged
+watch URLs that move when a target ships; `check` refetches them all —
 HEAD-then-GET, 30s timeout, sha256-compare — and reports
-baseline/changed/unchanged/error as JSON plus a `changes.md` with a new-wave
-candidates section for the orchestrator. Fetching requires `--only-host`
-(exact match, repeatable) per `skills/safety-gates`; redirects off the
-allowlist are refused. `diff` prints unified diffs of stored text bodies when
-`--store-bodies` was used on the check.
+baseline/changed/unchanged/error as JSON plus `changes.md`, and appends
+`{"kind","url","signal"}` lines to `triggers.jsonl` when a diff shows a real
+deploy signal (new endpoint/asset/version/host — a don't-wake gate drops
+CSS/media/.map/status-text churn). `poll-ct` dedupes crt.sh cert names into
+`new-subdomain` triggers (priority bump on api/staging/admin/dev/beta);
+`poll-feed` keyword-gates Atom/RSS changelog entries into `changelog`
+triggers. Fetching requires `--only-host` (exact match, repeatable) per
+`skills/safety-gates`; redirects off the allowlist are refused. `diff`
+prints unified diffs of stored text bodies when `--store-bodies` was used
+on the check.
 
 ## memory-consolidate
 
