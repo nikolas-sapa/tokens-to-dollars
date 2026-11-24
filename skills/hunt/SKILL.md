@@ -42,6 +42,33 @@ A proven finding triggers stop-on-proof for that weakness; the hunt continues on
 6. **Apply the FP rules before claiming.** Every playbook ends with an FP-rule refinement stating what does NOT count: introspection visibility is not a vulnerability, a rendered CAPTCHA widget is not enforcement, a signed assertion replayed is not a finding until a session is issued, two 200s are not two committed operations. The general rules and the ten-gate process are in `references/verification.md`.
 7. **Report through the triage gate.** Harm gate first, then the seven report-quality questions — run via `../reporter`. Separate demonstrated impact from plausible chains in writing; argue severity from what the victim loses, never the sum of component severities. Submission is always a human decision.
 
+## Target-yield scoring (program selection, Nov 2026)
+
+Rank candidate programs before allocating compute — five signals:
+
+1. **Pay-on-triage vs pay-on-resolution.** Exposure debt (>60% of
+   criticals unresolved for months; backlogs +131% YoY) strands cash on
+   pay-on-resolution programs and multiplies dup collisions on
+   unpatched bugs.
+2. **Implied $/submission** = 90-day bounties paid ÷ 90-day reports
+   received. AI-flooded publics pay pennies (Vercel $13.74/sub,
+   Arc $2.33/sub); uncrowded programs run $130–180+/sub.
+3. **Asset-tier ceiling, not headline max** — $1M+ ceilings cover
+   narrow tiers (specific contracts, key-access); standard criticals
+   cap $5–30k. Score the tier we'd actually hit.
+4. **Scope freshness** — newly launched programs/assets <90d have the
+   thinnest disclosed-bug coverage (highest dup headroom).
+5. **Tooling/rate-limit policies** — programs banning automation or
+   capping RPS drop EV to zero if flagged; read the brief first.
+
+Class yield (H1 2025-26 per-valid): **SSRF $1,851 (top per-report)**,
+IDOR/BOLA $1,265 (+29% YoY, under-supplied), improper access control
+$8.8M total spend, AI/LLM classes +222% growth with only ~13% of
+hunters testing them (under-saturated). **Commodity trap:** XSS pays
+$635/valid, volume −14%, and 78–82% of automated-bot findings are XSS —
+don't spray it; depth on one program beats breadth (repeat submissions
+compound validity AND bounty size).
+
 ## Playbook index
 
 | PB | Name | When to use | Gate ceiling |

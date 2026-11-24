@@ -166,6 +166,37 @@ reaching the payment frame"), with H1-2345678 cited in `matches`.
 - **Dedupe again on retest.** If a finding is revisited days or weeks later,
   re-run this skill. Someone may have disclosed the same bug in the meantime.
 
+## Platform duplicate mechanics (Nov 2026)
+
+- **First-valid wins everywhere** — all four platforms resolve dups by
+  first *valid + reproducible*, never first-received. Submission-
+  squatting stubs are sanctioned against (Bugcrowd explicit anti-
+  squatting rule, Mar 2026). Never race a partial.
+- **H1 dedupe = 4 factors:** same vuln type AND same endpoint AND same
+  method AND same root cause — SQLi on /api/users vs /api/orders are
+  NOT dups. Root cause = "one fix/deploy resolves both."
+- **Bugcrowd 3 principles:** (1) "touch the code, pay the bug" — a WAF
+  rule doesn't dedupe app-layer bugs; (2) similar ≠ same — distinct
+  code paths needing independent fixes pay separately; (3) many ≠
+  systemic — missing anti-CSRF on 5/50 endpoints = 5 findings, missing
+  framework-wide = 1 systemic.
+- **Intigriti:** related findings (same class, different code paths,
+  separate fixes) rewarded individually; first TWO valid reports of a
+  structural multi-endpoint issue both pay; impact-escalation pays the
+  delta (open-redirect→RCE pays RCE minus open-redirect); regressions
+  count as net-new.
+- **Dup payouts are $0 cash** but account-safe (YWH refunds stake; H1
+  refunds trial pre-disclosure; Intigriti counts valid dups positive).
+  Killing N/A matters more than killing dups.
+- **Calibration:** XBOW's 886-report run hit 23.5% dup + 23.6%
+  informative even with deterministic validators — informative =
+  policy/impact-framing failure (third-party components, excluded
+  classes), not wrongness. Check program exclusions before treating
+  "real but unrewarded" as safe.
+- **Regression harvesting:** 3–8% of closed bugs resurface via
+  incomplete fixes; a re-found regression = net-new report (and paid
+  retests earn +rep). Track our Resolved-target surface for re-checks.
+
 ## Non-duplicate rules
 
 Two reports matching on any of these are explicitly NOT duplicates —

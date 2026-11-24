@@ -417,6 +417,77 @@ for these before drafting the artifact:
   surface it in the checklist line so the human knows the payout path
   needs identity docs.
 
+## Triage economics — platform precision gates (Nov 2026)
+
+Every platform now gates throughput on rolling precision. The pipeline
+must score an account's standing before each submission and feed the
+numbers to the orchestrator's circuit breakers. N/A elimination matters
+more than duplicate elimination — dups cost $0 but mostly spare the
+account; N/A/invalid closures trigger the cliffs.
+
+| Platform | Gate (rolling) | Break-even precision | Consequence below | Recovery lane |
+|---|---|---|---|---|
+| HackerOne | Signal slider −1.0…7.0; 3 shared trial reports below gate | p ≥ (S+5)/12 (S=0→41.7%, 1→50%, 2→58.3%, 7→100%) | 3rd trial submit → 90-day pause on gated programs | Any Triaged/Resolved (incl. VDP) resets trials to 3, lifts pause |
+| Bugcrowd | >50% accuracy over 90d at ≥10 subs; **N/A counts as rejection** since Oct 2026 | >50% | 6 subs/wk cap ≥7 days; 10 consecutive invalid → review + 30-day suspension | VDPs exempt from throttle; rebuild via unique P1–P3 on VDP |
+| Intigriti | Validity Ratio over last-20 processed (Informative neutral) | <20%→1 slot; 20–40%→3; 40–60%→5; 60–80%→7; **≥80%→Unlimited** | Concurrency cap on open Triage reports (Little's Law: at 5d triage, 70% validity ≈ <10 subs/wk) | Unmanaged VDPs don't consume slots; clear NMI threads fast (they hold slots) |
+| YesWeHack | Credits: −1C submit; +2C accepted (+sev bonus); −3C invalid/OOS; −4C spam | ~43–48% acceptance solvency | Balance 0 → 15-day freeze; AI-slop = Severity 7 (all ethical points gone) | Dojo challenges KYC-exempt; dup/informative refund +1C (net 0) |
+
+Standing rules:
+- **Human-in-the-loop is mandatory** — H1 bans fully autonomous
+  submission, Intigriti requires disclosed AI use + human replies to
+  triagers (no raw LLM text in replies), YWH Sev-7 for unverified slop,
+  Bugcrowd expects AI but bans farming. The human reviews and sends —
+  always.
+- **Duplicates pay $0 cash everywhere** but mostly don't damage the
+  account (YWH refunds the credit; H1 refunds the trial report if
+  pre-disclosure; Intigriti counts valid dups positive). First-valid
+  wins — never race a stub.
+- **Pay-on-triage > pay-on-resolution** for cash velocity: exposure
+  debt means >60% of criticals sit unresolved months; on
+  pay-on-resolution programs cash strands and unpatched bugs multiply
+  dup collisions. Prefer pay-on-triage targets when ranking.
+- **Fee stakes:** Sherlock $250 USDC/submission (refunded if valid;
+  dup-refund unclear — check brief), Decred-style DCR deposits —
+  surface before the human pays anything.
+
+## Report-format economics
+
+The artifact is an executable interface for two readers: a machine
+validator (Hai Agentic Exploitation sandbox, Elastic-style 5-min Docker
+runner, Bugcrowd's text-only triage LLM) and a human with a 5–10 minute
+repro budget (3s title scan, 15s impact, 30s raw-request check).
+
+- **Text-first PoC, always.** Video-only reports = automatic N/A on
+  HackerOne (−5 rep). Bugcrowd's triage AI cannot see images/video at
+  all. Attach 3–5 redacted screenshots as *supplement*, never payload.
+  "Sheet of paper" test: printable plaintext must carry the whole bug.
+- **Title ≤140 chars, three tokens:** `[class] + [exact endpoint] +
+  [concrete impact]` — it's the dedupe/severity index the triager hits
+  first. `IDOR on GET /api/v2/invoices/{id} leaks cross-tenant PII`.
+- **300–800 words**, zero LLM-padding; atomic numbered steps (one action
+  each, zero implicit browser state, verified twice from clean session);
+  Expected-vs-Actual contrast; strictly separate executed / observed /
+  inferred.
+- **Copy-paste executable PoC:** raw HTTP pairs in fenced blocks +
+  single-command curl/python/HTML. Must run in <5 min (Elastic-style
+  sandboxes hard-timeout at 5:00). Ready-to-run HTML CSRF PoCs measurably
+  speed payout. Two researcher-owned accounts for authz bugs.
+- **Metric-by-metric severity:** full CVSS vector + one factual sentence
+  per metric, or the exact VRT entry on Bugcrowd (elevation argument at
+  top). Unargued "Critical" = inflation flag.
+- **Pre-flight lint before Bugcrowd** — report bodies are uneditable
+  post-submit (corrections live in comments). Strip scanner signatures
+  (nuclei/ffuf/Burp-Scanner strings — Brave-class programs reject raw
+  tool output); redact cookies/PII/tokens.
+- **Platform overlays:** Intigriti auto-append AI-usage disclosure +
+  testing IP; H1 needs no video-only; Google wants Debian-runnable PoC.
+- **Impact anchoring:** state attacker privilege → action → capability
+  → scale in ≤3 sentences at the top; minimal non-destructive proof
+  (one own-account record, `/etc/hostname`, `id`) — never bulk data.
+- Repeat submissions to one program compound (HSI: avg bounty rises
+  monotonically across a researcher's sequential valids on a target) —
+  bundle related findings honestly, don't inflate one-by-one.
+
 ## Output contract
 
 After writing the draft, append exactly one line to

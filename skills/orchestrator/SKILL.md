@@ -231,6 +231,37 @@ Field lessons from production agent hunters (OpenHack, Strix, provos/ironcurtain
 - **Capability floor exists.** Report cost + capability: distilled/small models can fail the workflow entirely — when a worker tier can't run the discipline, downgrade the engagement scope, don't let it fake the loop (~10M tokens/Opus-run, ~$150, is the published frontier cost envelope; GLM-class ~27M tokens).
 - **Bench context for precision claims.** PentestBench v1 (Nov 2026): best published result ~43% F1 on 761 planted vulns — precision-vs-volume tradeoffs are quantified (36% recall/53% precision beats 43% recall/26% precision for report-quality pipelines; every +7% recall at −27% precision is a triage-cost increase). Our pipeline optimizes precision — the reportability gate exists for that.
 
+## 9b. Account circuit breakers (platform precision gates)
+
+The orchestrator tracks the operator account's rolling standing per
+platform and pauses *before* cliffs, not after (full gate math in
+`../reporter` — Triage economics). Triggers use a safety buffer above
+the hard threshold:
+
+| Platform | Pause trigger (buffered) | Hard cliff | Recovery route |
+|---|---|---|---|
+| HackerOne | Signal within +0.5 of target program's slider, OR trial reports drop to 1/3 | 3rd trial → 90-day gated pause | Route next finding to fast-triaging VDP; one Triaged/Resolved resets trials |
+| Bugcrowd | 90-day accuracy (N/A counts as invalid) approaches 60%, OR 3 consecutive invalids | ≤50% → 6/wk throttle; 10 consec → 30-day suspension | Halt MBB queue; warmup on throttle-exempt VDPs |
+| Intigriti | Rolling-20 Validity approaches 85%, OR open Triage at 80% of slot cap | <80% loses Unlimited tier | Unmanaged VDPs (no slot cost); force human response on open NMI threads |
+| YesWeHack | Acceptance trending to 55%, credit balance <5C, OR any RTFS | ~43–48% solvency → 15-day freeze; AI-slop Sev 7 | Blacklist the RTFS program; submit only high-confidence Med+ (+2C net) |
+
+Rules:
+- These are **operational**, not advisory — a fired breaker halts that
+  platform's dispatch queue globally until the human clears it, same as
+  a `../safety-gates` stop.
+- NMI/Needs-Info threads are account liabilities (hold Intigriti slots,
+  −1 ranking point on YWH): route them to the human inbox daily, never
+  auto-reply raw LLM text (Intigriti explicitly requires non-LLM
+  triager replies).
+- VDPs are the rehabilitation lane on every platform (throttle-exempt
+  on Bugcrowd, slot-free on Intigriti, trial-reset on H1) — when a
+  breaker fires, the orchestrator reroutes queued findings to
+  in-scope VDPs, it does not stop hunting.
+- Identity governance: one verified identity per legal operator
+  (Jumio/Onfido/YWH-KYC at submission on all four now); organizational
+  pipelines register as H1 Business Accounts; no parallel duplicate
+  submissions across member accounts.
+
 ## 10. Stop conditions and honesty
 
 - All `../safety-gates` stop conditions apply; any one firing halts dispatch globally until a human clears it.
