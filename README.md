@@ -150,14 +150,17 @@ open scoreboard.
 
 ## Status
 
-Early. Skills + ingest pipelines first; wrappers and eval CI next.
-See `plan.md` for the roadmap and `findings.md` for the research behind it.
+Active development. 15 skills, 17 tools, 14 playbooks, 4 eval harnesses —
+see `plan.md` for the roadmap and `findings.md` for the research behind it.
+Published on npm as `tokens-to-dollars`.
 
 ## Responsible use
 
 Read `docs/responsible-use.md` before pointing this at anything. Authorization
 gates are load-bearing — removing them makes the tool worse, not freer.
 `docs/threat-model.md` explains why they exist.
+`docs/terms-of-use.md` (authorized testing only) and `docs/privacy.md`
+(no telemetry, keys stay local) apply to all use and contributions.
 
 ## License
 

@@ -1,0 +1,13 @@
+.git
+.gitignore
+node_modules
+**/__pycache__/
+**/*.pyc
+data/
+memory/
+out/
+knowledge/
+findings.md
+plan.md
+progress.md
+task_plan.md
