@@ -9,7 +9,9 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tarfile
 import time
+import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -26,6 +28,31 @@ AJAYSENR = "https://raw.githubusercontent.com/ajaysenr/HackerOne-Disclosed-Repor
 AJAYSENR_TREE = "https://api.github.com/repos/ajaysenr/HackerOne-Disclosed-Reports/git/trees/main?recursive=1"
 XDAVIDHU = "https://raw.githubusercontent.com/xdavidhu/awesome-google-vrp-writeups/master/writeups.csv"
 SAYAN011 = "https://raw.githubusercontent.com/sayan011/Immunefi-bug-bounty-writeups-list/master/README.md"
+
+# Immunefi's old bugfix-reviews repo is gone; the public successors are the
+# Web3-Security-Library BugFixReviews index (title + vuln type + Medium link
+# per review) and the bugfix-reviews-pocs README table (reward USD + PoC path
+# + article link). Fetch both, merge on the article URL.
+IMMU_BFR_INDEX = "https://raw.githubusercontent.com/immunefi-team/Web3-Security-Library/main/BugFixReviews/README.md"
+IMMU_BFR_POCS = "https://raw.githubusercontent.com/immunefi-team/bugfix-reviews-pocs/main/README.md"
+IMMU_BFR_POC_REPO = "https://github.com/immunefi-team/bugfix-reviews-pocs"
+
+# code-423n4 org hosts one <YYYY-MM-protocol-findings> repo per contest; each
+# repo's data/*.json files are the disclosed warden submissions. Listing the
+# org repos is ~9 paged calls; per-repo finding counts come from bounded
+# recursive tree fetches (unauth core limit ~60/hr) carried forward across
+# runs when the repo's pushed_at is unchanged.
+C4A_ORG_REPOS = "https://api.github.com/orgs/code-423n4/repos?per_page=100&page=%d"
+C4A_TREE = "https://api.github.com/repos/code-423n4/%s/git/trees/%s?recursive=1"
+# codeload tarballs are not charged against the ~60/hr unauth API quota; used
+# to count data/*.json when the trees API is rate-limited
+C4A_TARBALL = "https://codeload.github.com/code-423n4/%s/tar.gz/refs/heads/%s"
+C4A_REPO = "https://github.com/code-423n4/%s"
+C4A_NAME = re.compile(r"^(\d{4})-(\d{2})-(.+)-findings$")
+C4A_DATA = re.compile(r"^data/.+\.json$")
+C4A_TREE_CAP = 40
+C4A_MAX_PAGES = 12
+C4A_PREV = {}  # repo name -> {pushed_at, n_findings} carried from prior run
 
 TRICKEST_REPO = "trickest/cve"
 TRICKEST_TREE = "https://api.github.com/repos/%s/git/trees/%%s" % TRICKEST_REPO
@@ -273,6 +300,214 @@ def source_xdavidhu(timeout):
 
 def source_sayan011(timeout):
     return SAYAN011, norm_sayan011(fetch(SAYAN011, timeout).decode("utf-8", "replace"))
+
+
+BFR_HEAD = re.compile(r"^###\s*\[([^\]]+)\]\(([^)\s]+)")
+BFR_MONTH = re.compile(r"^##\s+([A-Z][a-z]+ \d{4})\s*$")
+BFR_VTYPE = re.compile(r"^-?\s*vulnerabilit(?:y|ies)\s+type[s]?:\s*(.+?)\s*$", re.I)
+BFR_PAYOUT = re.compile(r"\$([\d.,]+)\s*([kKmM]?)\s*payout", re.I)
+BFR_STRIP = re.compile(r"(?i)\s*[-—:]?\s*bug\s*fix\s*review\b|\s*[-—:]\s*\$[\d.,]+\s*[kKmM]?\s*payout\s*$")
+
+
+def bfr_month_date(m):
+    try:
+        return datetime.strptime(m, "%B %Y").strftime("%Y-%m-01")
+    except ValueError:
+        return None
+
+
+def bfr_program(title):
+    t = BFR_STRIP.sub("", title or "").strip(" :-—")
+    return t or None
+
+
+def norm_bfr_pocs(text):
+    """bugfix-reviews-pocs README table: Name | Reward | POC | Article | Command."""
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not (line.startswith("|") and line.endswith("|")):
+            continue
+        cols = [c.strip() for c in line.strip("|").split("|")]
+        if len(cols) < 4 or set(cols[0]) <= set("-: ") or cols[0].lower() == "name":
+            continue
+        art = MD_LINK.search(cols[3])
+        poc = MD_LINK.search(cols[2])
+        url = art.group(2) if art else None
+        poc_path = poc.group(2) if poc else None
+        poc_url = ("%s/blob/main/%s" % (IMMU_BFR_POC_REPO, poc_path.lstrip("./"))
+                   if poc_path else None)
+        out[url or cols[0]] = {"title": cols[0],
+                               "bounty_usd": parse_usd(cols[1]),
+                               "url": url, "poc": poc_url}
+    return out
+
+
+def norm_bfr_index(text):
+    """Web3-Security-Library BugFixReviews README: ### [Title](url) entries
+    under '## Month YYYY' headers, '- Vulnerability type:' bullet each."""
+    out = []
+    month = None
+    cur = None
+    for line in text.splitlines():
+        line = line.rstrip()
+        m = BFR_MONTH.match(line)
+        if m:
+            month = bfr_month_date(m.group(1))
+            cur = None
+            continue
+        h = BFR_HEAD.match(line.strip())
+        if h:
+            pm = BFR_PAYOUT.search(h.group(1))
+            cur = rec("immunefi-bfr",
+                      title=h.group(1),
+                      program=bfr_program(h.group(1)),
+                      bounty_usd=parse_usd(pm.group(1) + pm.group(2)) if pm else None,
+                      url=h.group(2),
+                      date=month,
+                      extra={"platform": "immunefi"})
+            out.append(cur)
+            continue
+        if not cur:
+            continue
+        v = BFR_VTYPE.match(line.strip())
+        if v and not cur["weakness"]:
+            cur["weakness"] = clean(v.group(1).rstrip("."))
+    return out
+
+
+def source_immunefi_bfr(timeout):
+    out = norm_bfr_index(fetch(IMMU_BFR_INDEX, timeout).decode("utf-8", "replace"))
+    try:
+        pocs = norm_bfr_pocs(fetch(IMMU_BFR_POCS, timeout).decode("utf-8", "replace"))
+    except Exception as e:
+        log.warning("immunefi-bfr pocs table failed: %s", e)
+        pocs = {}
+    by_url = {r["url"]: r for r in out if r["url"]}
+    for p in pocs.values():
+        r = by_url.get(p["url"]) if p["url"] else None
+        if r:
+            if r["bounty_usd"] is None and p["bounty_usd"] is not None:
+                r["bounty_usd"] = p["bounty_usd"]
+            if p["poc"]:
+                r["poc"] = p["poc"]
+        else:
+            out.append(rec("immunefi-bfr",
+                           title=p["title"], program=bfr_program(p["title"]),
+                           bounty_usd=p["bounty_usd"], url=p["url"],
+                           extra={"platform": "immunefi", "poc": p["poc"]}))
+    return IMMU_BFR_INDEX, out
+
+
+def c4a_count(tree):
+    return sum(1 for t in tree.get("tree", [])
+               if t.get("type") == "blob" and C4A_DATA.match(t["path"]))
+
+
+def c4a_count_tarball(name, branch, timeout):
+    """Count data/*.json inside the repo tarball (codeload has no API quota).
+    Members are '<repo>-<sha>/data/<file>.json'."""
+    raw = fetch(C4A_TARBALL % (name, branch or "main"), timeout)
+    n = 0
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+        for m in tf:
+            parts = m.name.split("/", 1)
+            if len(parts) == 2 and C4A_DATA.match(parts[1]) and m.isfile():
+                n += 1
+    return n
+
+
+def gh_rate_remaining(timeout):
+    """Unauth core calls remaining; /rate_limit itself is free."""
+    try:
+        d = fetch_json("https://api.github.com/rate_limit", timeout)
+        return int(((d.get("resources") or {}).get("core") or {}).get("remaining") or 0)
+    except Exception:
+        return 0
+
+
+def source_code4rena(timeout):
+    repos = []
+    try:
+        for page in range(1, C4A_MAX_PAGES + 1):
+            batch = fetch_json(C4A_ORG_REPOS % page, timeout)
+            if not isinstance(batch, list) or not batch:
+                break
+            repos += batch
+            if len(batch) < 100:
+                break
+    except Exception as e:
+        if not C4A_PREV:
+            raise
+        # listing is rate-limited; re-count known repos via tarballs instead
+        log.warning("code4rena org listing failed (%s); reusing %d repos "
+                    "from the prior run", e, len(C4A_PREV))
+        repos = [{"name": n, "pushed_at": v.get("pushed_at"),
+                  "default_branch": "main"}
+                 for n, v in C4A_PREV.items()]
+    findings = [r for r in repos if str(r.get("name", "")).endswith("-findings")]
+    findings.sort(key=lambda r: r.get("pushed_at") or "", reverse=True)
+    counts = {}
+    api_dead = gh_rate_remaining(timeout) <= 5
+    if api_dead:
+        log.warning("code4rena: github api budget low; counting via codeload "
+                    "tarballs instead of git trees")
+    done = 0
+    for r in findings:
+        name = r["name"]
+        pushed = r.get("pushed_at")
+        prev = C4A_PREV.get(name)
+        if prev and prev.get("pushed_at") == pushed and prev.get("n_findings") is not None:
+            counts[name] = prev["n_findings"]  # repo unchanged: reuse count
+            continue
+        if done >= C4A_TREE_CAP:
+            continue
+        try:
+            if api_dead:
+                counts[name] = c4a_count_tarball(
+                    name, r.get("default_branch"), timeout)
+            else:
+                tree = fetch_json(
+                    C4A_TREE % (name, r.get("default_branch") or "main"),
+                    timeout)
+                counts[name] = c4a_count(tree)
+            done += 1
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429) and not api_dead:
+                log.warning("code4rena: api rate-limited at %s; falling back "
+                            "to codeload tarballs for the rest", name)
+                api_dead = True
+                try:
+                    counts[name] = c4a_count_tarball(
+                        name, r.get("default_branch"), timeout)
+                    done += 1
+                except Exception as e2:
+                    log.warning("code4rena tarball %s failed: %s", name, e2)
+            else:
+                log.warning("code4rena count %s failed: %s", name, e)
+        except Exception as e:
+            log.warning("code4rena count %s failed: %s", name, e)
+    out = []
+    for r in findings:
+        name = r["name"]
+        m = C4A_NAME.match(name)
+        if m:
+            proto = m.group(3)
+            date = "%s-%s-01" % (m.group(1), m.group(2))
+        else:
+            proto, date = name[:-len("-findings")], None
+        n = counts.get(name)
+        repo_url = C4A_REPO % name
+        out.append(rec("code4rena",
+                       title="code-423n4 %s findings%s"
+                             % (name, " (%d disclosed)" % n if n is not None else ""),
+                       program=proto, url=repo_url, date=date,
+                       extra={"platform": "code4rena", "contest": name,
+                              "n_findings": n,
+                              "findings_url": ("%s/tree/%s/data"
+                                               % (repo_url, r.get("default_branch") or "main")),
+                              "pushed_at": pushed}))
+    return "https://api.github.com/orgs/code-423n4/repos", out
 
 
 CVE_FILE = re.compile(r"(CVE-\d{4}-\d+)\.md$", re.I)
@@ -837,6 +1072,8 @@ SOURCES = [
     ("ajaysenr-h1", source_ajaysenr),
     ("xdavidhu-google-vrp", source_xdavidhu),
     ("sayan011-immunefi", source_sayan011),
+    ("immunefi-bfr", source_immunefi_bfr),
+    ("code4rena", source_code4rena),
     ("trickest-cve", source_trickest),
     ("defihacklabs", source_defihacklabs),
     ("nuclei-templates", source_nuclei),
@@ -848,15 +1085,55 @@ SOURCES = [
     ("patchdb", source_patchdb),
 ]
 
+# sources that need no API key and no local file -- what --free-corpus runs
+FREE_SOURCES = [n for n, _ in SOURCES if n not in ("solodit", "patchdb")]
+
+
+def rec_key(r):
+    return (r.get("source"), r.get("url") or r.get("title") or "")
+
+
+def load_prev(path):
+    """Group existing records.jsonl rows by source for merge/carry-forward."""
+    prev = {}
+    if not path.is_file():
+        return prev
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and r.get("source"):
+            prev.setdefault(r["source"], []).append(r)
+    return prev
+
 
 def main():
     global TRICKEST_MAX_FILES, HUNTR_MAX_FILES, SOLODIT_MAX_RECORDS
     global PRIMEVUL_MAX_ROWS, PATCHDB_PATH, PATCHDB_MAX_RECORDS
+    global C4A_TREE_CAP, C4A_MAX_PAGES, C4A_PREV
     names = ", ".join(n for n, _ in SOURCES)
     ap = argparse.ArgumentParser(description="Ingest disclosed-bug/writeup corpora for RAG and few-shot priming.")
     ap.add_argument("--out-dir", default="./out", help="output directory (default ./out)")
     ap.add_argument("--sources", default=None,
                     help="comma-separated source filter (one or more of: %s)" % names)
+    ap.add_argument("--free-corpus", action="store_true",
+                    help="run every keyless/no-local-file source (all except "
+                         "solodit and patchdb); combine with --sources to narrow further")
+    ap.add_argument("--replace", action="store_true",
+                    help="rewrite records.jsonl with only what this run fetched "
+                         "(default merges: refreshed sources replace their old "
+                         "rows, untouched/errored sources keep theirs)")
+    ap.add_argument("--c4a-tree-cap", type=int, default=C4A_TREE_CAP,
+                    help="max code-423n4 findings repos counted per run via "
+                         "git tree (or codeload tarball when the API is "
+                         "rate-limited) (default %d)" % C4A_TREE_CAP)
+    ap.add_argument("--c4a-pages", type=int, default=C4A_MAX_PAGES,
+                    help="max org-repo listing pages for code4rena "
+                         "(default %d)" % C4A_MAX_PAGES)
     ap.add_argument("--list", action="store_true", help="list source names and exit")
     ap.add_argument("--trickest-cap", type=int, default=TRICKEST_MAX_FILES,
                     help="max trickest/cve writeup records (default %d)" % TRICKEST_MAX_FILES)
@@ -889,37 +1166,88 @@ def main():
     PRIMEVUL_MAX_ROWS = args.primevul_cap
     PATCHDB_PATH = args.db
     PATCHDB_MAX_RECORDS = args.db_cap
+    C4A_TREE_CAP = args.c4a_tree_cap
+    C4A_MAX_PAGES = args.c4a_pages
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
     want = {s.strip() for s in args.sources.split(",")} if args.sources else None
+    if args.free_corpus:
+        free = set(FREE_SOURCES)
+        want = free if want is None else want & free
+    known = {n for n, _ in SOURCES}
+    for name in list(want or set()):
+        if name not in known:
+            log.warning("unknown source ignored: %s (see --list)", name)
+            want.discard(name)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    records_path = out_dir / "records.jsonl"
+    index_path = out_dir / "knowledge-index.json"
 
+    prev = {} if args.replace else load_prev(records_path)
+    prev_index = {}
+    if not args.replace and index_path.is_file():
+        try:
+            for e in json.loads(index_path.read_text()).get("sources", []):
+                if e.get("source"):
+                    prev_index[e["source"]] = e
+        except ValueError:
+            pass
+    # carry code4rena repo state forward: counts for repos whose pushed_at is
+    # unchanged cost no API call; the repo list itself survives listing 403s
+    for r in prev.get("code4rena", []):
+        if r.get("contest"):
+            C4A_PREV[r["contest"]] = {"pushed_at": r.get("pushed_at"),
+                                      "n_findings": r.get("n_findings")}
+
+    fresh = {}
     index = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
              "file": "records.jsonl", "sources": []}
-    total = 0
-    with open(out_dir / "records.jsonl", "w") as f:
-        for name, fn in SOURCES:
-            if want and name not in want:
-                continue
-            entry = {"source": name, "status": "ok", "n_records": 0,
-                     "file": "records.jsonl"}
-            try:
-                url, recs = fn(args.timeout)
-                for r in recs:
-                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
-                entry.update(url=url, n_records=len(recs),
-                             fetched_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
-                total += len(recs)
-                log.info("%s: %d records", name, len(recs))
-            except Exception as e:
-                entry["status"] = "error"
-                entry["error"] = "%s: %s" % (type(e).__name__, e)
+    if want is not None and not want:
+        log.warning("no valid sources selected; nothing to do")
+    for name, fn in SOURCES:
+        if want is not None and name not in want:
+            continue
+        entry = {"source": name, "status": "ok", "n_records": 0,
+                 "file": "records.jsonl"}
+        try:
+            url, recs = fn(args.timeout)
+            fresh[name] = recs
+            entry.update(url=url, n_records=len(recs),
+                         fetched_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+            log.info("%s: %d records", name, len(recs))
+        except Exception as e:
+            keep = prev.get(name, [])
+            entry["status"] = "error"
+            entry["error"] = "%s: %s" % (type(e).__name__, e)
+            if keep:
+                entry["retained"] = len(keep)
+                log.warning("%s failed: %s (kept %d prior records)",
+                            name, e, len(keep))
+            else:
                 log.warning("%s failed: %s", name, e)
-            index["sources"].append(entry)
-    index["total_records"] = total
-    (out_dir / "knowledge-index.json").write_text(json.dumps(index, indent=2) + "\n")
-    log.info("wrote %d records to %s", total, out_dir / "records.jsonl")
+        index["sources"].append(entry)
+    for name, e in prev_index.items():
+        if name not in fresh and name not in {en["source"] for en in index["sources"]}:
+            index["sources"].append(e)
+
+    merged, seen = [], set()
+    order = [n for n, _ in SOURCES] + sorted(set(prev) - known)
+    for name in order:
+        recs = fresh.get(name)
+        if recs is None and not args.replace:
+            recs = prev.get(name, [])
+        for r in recs or []:
+            k = rec_key(r)
+            if k in seen:
+                continue
+            seen.add(k)
+            merged.append(r)
+    records_path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n"
+                                    for r in merged))
+    index["total_records"] = len(merged)
+    index_path.write_text(json.dumps(index, indent=2) + "\n")
+    log.info("wrote %d records to %s", len(merged), records_path)
 
     flagger = Path(__file__).resolve().parent.parent / "content-scan" / "flag_corpus.py"
     try:

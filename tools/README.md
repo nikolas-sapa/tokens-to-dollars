@@ -26,7 +26,12 @@ program's machine-readable scope before any agent touches it.
 for RAG and few-shot priming: SecurityTalent/bugskill-ai's public H1 report
 dump (rediscovered via the GitHub trees API if the path moves), ajaysenr's
 HackerOne disclosed-reports index, xdavidhu's Google VRP writeups CSV,
-sayan011's Immunefi writeups list, a bounded slice of trickest/cve writeups
+sayan011's Immunefi writeups list, the Immunefi bugfix-review corpus
+(`immunefi-bfr`: `Web3-Security-Library`'s BugFixReviews index enriched
+with `bugfix-reviews-pocs`' reward/PoC table), a per-contest index of
+code-423n4 `*-findings` repos (`code4rena`: ~376 contests, `n_findings`
+counts from rate-limit-gated git-tree calls carried forward across runs),
+a bounded slice of trickest/cve writeups
 (`--trickest-cap`, default 500 newest), SunWeb3Sec/DeFiHackLabs incident
 index rows, per-class aggregate counts from nuclei-templates (one
 `nuclei:<class>` record per top-level dir), n132/ARVO's OSS-Fuzz
@@ -39,11 +44,14 @@ nothing), `solodit` pages the Cyfrin findings API (`SOLODIT_API_KEY`,
 bounded datasets-server row windows (the full shards run ~500 MB+), and
 `patchdb` reads a local CVEfixes/MoreFixes sqlite via `--db` and emits one
 record per vuln+patch method pair — the func bodies feed
-verify_claims/patch-diff work. `--list` prints the source names. Output is
-`records.jsonl` — one
+verify_claims/patch-diff work. `--free-corpus` runs every keyless source
+(no API key, no local file) in one shot; `--list` prints the source names.
+Runs merge into `records.jsonl` incrementally — refreshed sources replace
+their rows, untouched/errored sources keep theirs (`--replace` rewrites
+from scratch). Output is `records.jsonl` — one
 `{source, title, program, weakness, severity, bounty_usd, url, date}` row per
 report, best-effort mapped (adapters may add keys like `firm`, `status`,
-`vulnerable_func`) — plus `knowledge-index.json` with per-source
+`n_findings`, `vulnerable_func`) — plus `knowledge-index.json` with per-source
 counts. Content is author-owned: mirror internally, never redistribute.
 
 ## bounty-radar

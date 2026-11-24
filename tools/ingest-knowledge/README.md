@@ -8,8 +8,10 @@ Python 3.9+, stdlib only.
 
 ```sh
 python3 ingest_knowledge.py                    # writes ./out
+python3 ingest_knowledge.py --free-corpus --out-dir knowledge   # keyless sources only
 python3 ingest_knowledge.py --out-dir knowledge/corpus
 python3 ingest_knowledge.py --sources bugskill-ai,ajaysenr-h1
+python3 ingest_knowledge.py --sources code4rena --c4a-tree-cap 30
 python3 ingest_knowledge.py --list             # show source names
 python3 ingest_knowledge.py --trickest-cap 100
 python3 ingest_knowledge.py --sources solodit --solodit-cap 200
@@ -20,7 +22,11 @@ python3 ingest_knowledge.py --timeout 10
 | arg | default | effect |
 |---|---|---|
 | `--out-dir` | `./out` | output directory, created if missing |
-| `--sources` | all | comma-separated source filter |
+| `--sources` | all | comma-separated source filter (narrows `--free-corpus` further) |
+| `--free-corpus` | off | run only keyless/no-local-file sources (all except `solodit`, `patchdb`) |
+| `--replace` | off | rewrite records.jsonl with only this run's fetches instead of merging |
+| `--c4a-tree-cap` | `40` | max code-423n4 findings repos tree-fetched for `n_findings` counts |
+| `--c4a-pages` | `12` | max code-423n4 org-repo listing pages (100 repos/page) |
 | `--list` | off | print source names and exit |
 | `--trickest-cap` | `500` | max trickest/cve writeup records (newest year dirs first) |
 | `--huntr-cap` | `250` | max legacy huntr vulnerability.json fetches (418sec/huntr fallback only) |
@@ -40,6 +46,25 @@ Individual source failures are tolerated: the source is marked `error` in
 If a hardcoded URL 404s, the script rediscovers the payload via the GitHub
 git-trees API before giving up.
 
+## Incremental updates (merge mode)
+
+`records.jsonl` is a persistent mirror, not a per-run artifact. By default a
+run **merges**: sources that ran replace their old rows, sources that were
+not run keep theirs, and a source that errored keeps its previous records
+(`retained: N` in the index entry). Rows are deduped on `(source, url-or-
+title)`. `--replace` restores the old truncate-and-rewrite behavior.
+
+`code4rena` uses this to stay inside GitHub's unauthenticated core limit
+(~60 req/hr): each `-findings` repo's `n_findings` count comes from one
+git-tree call, carried forward on later runs whenever the repo's `pushed_at`
+is unchanged — so re-runs only spend API calls on new/updated contests, and
+the counted set grows across runs. The adapter reads `/rate_limit` (free)
+before tree-fetching; when the budget is low or a tree call 403s it falls
+back to codeload tarballs (`/rate_limit` and codeload are not charged
+against the quota), and when even the org listing 403s it reuses the repo
+set stored in the previous run's records — so counting still progresses at
+zero API budget, just bounded by `--c4a-tree-cap`.
+
 ## Sources
 
 | source | content | discovery |
@@ -48,6 +73,8 @@ git-trees API before giving up.
 | `ajaysenr-h1` | ~13k HackerOne disclosed-report index rows | `index.json`, with trees-API fallback |
 | `xdavidhu-google-vrp` | ~300 Google VRP writeups (`writeups.csv`) | fixed CSV URL |
 | `sayan011-immunefi` | ~100 Immunefi/web3 writeups parsed from the README markdown table | fixed URL; bounty strings like `10M`, `1M+50k`, `400 ETH` parsed to `bounty_usd` (non-USD denominations → `null`, `Not Paid` → `0`) |
+| `immunefi-bfr` | ~60 Immunefi bugfix-review writeups (title, vuln type, month, Medium link; some carry `bounty_usd`/`poc`) | `immunefi-team/Web3-Security-Library` `BugFixReviews/README.md` sections (`### [title](url)` under `## Month YYYY`, `- Vulnerability type:` bullets, `$Nm payout` in titles), enriched from `immunefi-team/bugfix-reviews-pocs` README table (reward USD + PoC blob URL) merged on article URL — the old `immunefi-team/bugfix-reviews` repo no longer exists |
+| `code4rena` | one index record per `code-423n4` `*-findings` repo (~376 contests): program from `YYYY-MM-<proto>-findings`, `contest`, `findings_url`, `pushed_at`, `n_findings` | paged org-repo listing (100/page, `--c4a-pages` bound; falls back to the repo set in prior records when listing 403s); `data/*.json` counts via git trees, or codeload tarballs when rate-limited (`--c4a-tree-cap` bound, newest `pushed_at` first); counts carried forward while `pushed_at` is unchanged |
 | `trickest-cve` | bounded subset of trickest/cve markdown writeups (newest `--trickest-cap` files, default 500) | git-trees API: year dirs sorted desc, per-year subtrees until cap; CVE id → `title`/`weakness`, year dir → `date` |
 | `defihacklabs` | ~915 SunWeb3Sec/DeFiHackLabs incident index rows | README index `[YYYYMMDD name](link)` rows; `### Lost:` lines land in `title` (`bounty_usd` stays `null` — these are losses, not payouts); PoC `.sol` path → `url` |
 | `nuclei-templates` | one aggregate record per top-level template dir (`nuclei:<class>`, ~14 rows) | single recursive git-tree call; `.yaml`/`.yml` counts by top-level dir; warns if the tree is truncated |
@@ -67,9 +94,11 @@ git-trees API before giving up.
   keys on top of the fixed schema — `huntr` adds `status`/`repo`/`cve`,
   `solodit` adds `firm`, `primevul` adds `cve`/`commits`/`n_samples` (and
   function bodies when present), `patchdb` adds
-  `cve`/`commit`/`file`/`method`/`vulnerable_func`/`patched_func`.
+  `cve`/`commit`/`file`/`method`/`vulnerable_func`/`patched_func`,
+  `immunefi-bfr` adds `platform`/`poc`, `code4rena` adds
+  `platform`/`contest`/`n_findings`/`findings_url`/`pushed_at`.
 - `knowledge-index.json` — `generated_at`, `total_records`, and per-source
-  `{source, url, status, n_records, file, fetched_at, error?}`.
+  `{source, url, status, n_records, file, fetched_at, error?, retained?}`.
 
 ### patchdb expected schema
 

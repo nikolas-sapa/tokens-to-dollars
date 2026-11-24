@@ -140,6 +140,8 @@ TOOLS = {
         "description": "Build the disclosed-bug/writeup corpus (records.jsonl) for RAG and few-shot priming.",
         "inputSchema": {"type": "object", "properties": {
             "out_dir": {"type": "string"}, "sources": {"type": "string"},
+            "free_corpus": {"type": "boolean"}, "replace": {"type": "boolean"},
+            "c4a_tree_cap": {"type": "integer"},
             "timeout": {"type": "number"}}},
         "cmd": lambda a: [sys.executable, script("ingest-knowledge", "ingest_knowledge.py"), *flags(a)],
         "timeout": 180},
