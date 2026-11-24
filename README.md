@@ -1,5 +1,9 @@
 # tokens→dollars
 
+[![npm](https://img.shields.io/npm/v/tokens-to-dollars)](https://www.npmjs.com/package/tokens-to-dollars)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![install](https://img.shields.io/badge/install-npx%20tokens--to--dollars-brightgreen)](#install)
+
 Convert LLM tokens into bounty dollars.
 
 An open, harness-agnostic skill-pack + CLI that turns agent token spend into
