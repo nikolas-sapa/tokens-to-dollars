@@ -30,6 +30,7 @@ tools/
                        #   + ywh/intigriti APIs -> programs.db (ranked)
   ingest-knowledge     # bugskill-ai, ajaysenr, reddelexc, immunefi reviews,
                        #   c4 findings -> knowledge/ (RAG, payout-labeled)
+                       #   [stale: c4 winding down — historical corpus only]
   wrap                 # thin adapters: subfinder/httpx/nuclei/katana/
                        #   trufflehog/ffuf/burp-mcp (hexstrike pattern)
   ledger               # token-spend -> findings -> payout scoreboard

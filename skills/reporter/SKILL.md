@@ -177,6 +177,10 @@ Channel decision:
   - Recipient comes only from the manifest `contact` block
     (security.txt, diodb, policy page). A guessed address is an
     `unknowns` entry, and it blocks the draft.
+  - When the policy page itself is missing, resolve asset→contact via
+    the lookup.disclose.io index (its API/`disclose` client) before
+    declaring the recipient unknown — a hit counts as a policy-source
+    address, a miss stays `unknowns`.
   - Output is a plain-text mail plus attachment list, not form fields.
     Subject: `[Security] <finding summary> — <program>`.
   - A disclosure timeline (90-day default) goes in the body — a mail

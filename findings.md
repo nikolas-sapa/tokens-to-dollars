@@ -246,3 +246,26 @@ Notable intel (findings only):
 - Attribution blindness 53.5%/14.2% -> decided_by + lineage already covers.
 - Economics verdict: hybrid human+agent high-severity = only verified positive $/compute (XBOW Chrome 6.25x gross); fully-autonomous everything else = negative (Olas -19.2%, Circadian $0.62/day); audit contests collapsed ($14.20/sub actual).
 - curl lesson: removing cash removed slop, validity rebounded -> quality gates beat AI bans; GitHub VIP tier + 4-sub caps = signal moats.
+
+
+## Wave 11 — 8-lane research sweep (Nov 23, 2026) deltas
+
+**Session-broker** (Thacker/XBOW/Strix): vault holds creds+TOTP seeds, broker holds live tokens + re-auth, injection proxy stamps auth at egress — workers NEVER see secrets (the 80%-token-waste fix). Build as session-broker tool.
+
+**PB-2 AI-target**: Google tiers $20k rogue/$15k exfil, MS Copilot $250-30k (0-click x-user exfil=Critical), OpenAI ≤$172k (1-click ATO $51,577), 0DIN $5-15k execute. Primitives: canary+OAST exfil proof, CSP laundering (blob.core/teams/googleusercontent), ref-style markdown bypass, invisible-text channels, memory pollution. FP rules: self-injection, prompt-leak-only, hallucination-no-effect, sandbox-intended-exec, victim-config, MS "no security impact".
+
+**PB-12 IDOR**: second-identifier swap (path validated, body/header trusted), GID base64 decode+increment, cross-tenant headers (X-User-Id/X-Account-Id/X-Forwarded-User), alias-batch 200 objs/req, GraphQL nested re-check bypass. Kill-list: CDN cache 200, public-by-design, self-IDOR, 404-masking, empty-soft-fail, seq-ID-public-only. UUID IDOR = valid if obtainable. Response table: 200+B data=IDOR, 200+A=hunt 2nd param, 403=enforced, 404=masked?, 200-empty=soft-fail.
+
+**PB-13 desync**: 0.CL+early-response gadgets, parser-discrepancy (H-V/H-T primitives), dual-CL/multipart/byteranges/TE-gzip triggers, dangling-byte RQP, Shared-Parser Confusion, client-side desync. Kettle: ~700 vulns across authorized sites, $200k/2wk. Cache: entanglement (normalized keyed comps), Akamai key-leak headers, persisted_on_clean proof mandatory.
+
+**Web3/PB-10**: post-launch pays $20k median crit, 10%-of-funds-at-risk (capped, floored ~$25-50k), Foundry/Hardhat fork PoC mandatory (inline or gist), deployed>repo, ANY live tx = permaban. Fees: Immunefi $25 + Credits refund; Cantina $5-100 deposits; Sherlock $250 stake (52% hit rate). KYC 87/154.
+
+**Radar EV**: use avg_bounty not max; bounty_velocity=paid_90d/reports_90d; competition via hackers_thanked; time_to_bounty lag; informative_rate; fresh<48h boost; scope_breadth (wildcards, auth surface); invite_only+; dup-prone-.
+
+**Sources**: BUILD algora/opire keyless APIs, sherlock contests, bbscope /updates, YWH/Intigriti JWT APIs, diodb offers_bounty+policy_url_status harvest, securitytxt parser (Expires=dead flag), lookup.disclose.io client, PD public-bbp list. KILL: polar (dead), federacy (dead), issuehunt (stale), c4 (wind-down), hackerhive (dead).
+
+**change-detect**: kind tags js|schema|changelog|fingerprint; poll-ct (crt.sh); poll-feed keyword gate (auth|payment|admin|oauth|upload|billing|permission); signal→action table; scope-diff in ingest-scope; don't wake on content-only diffs.
+
+**Recon**: add wraps gau/waybackurls/arjun/x8/subzy/wafw00f/naabu-passive; asset-graph fields (subdomain source+ips+cdn+takeover-fp, service proto+banner+tls, app tech+favicon_mmh3+waf, endpoint methods+params+auth_required+state_changing); CT monitoring new-subdomain trigger; OOS-neighbor leads.
+
+**Dedupe**: informative_rate from hacktivity; informative-prone scopes deprioritized; Intigriti informative=neutral.

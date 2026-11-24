@@ -90,6 +90,24 @@ states one, quote it instead.
   pasted over a line. Rename PoCs `.txt` if the gateway strips `.py`.
 - **One address, one finding per mail.** No CC chains, no batch digests.
 
+## Escalation ladder — when the vendor channel is dead
+
+The designated address is the first rung, not the only one. When the
+published contact is absent, bouncing, or silent past its window:
+
+1. **Vendor, one retry** — same thread, ~7 days. Silence past the
+   vendor's stated window (or 45 days total) moves you up a rung.
+2. **National CERT/CC** — CERT/CC or your national CSIRT; they run
+   vendor-finding when the published contact is stale or missing.
+3. **CISA VINCE-NT** — file when the vendor is unresponsive or no
+   channel exists at all. CISA coordinates the disclosure and is a
+   CNA, so the case can mint the CVE the vendor never issued.
+
+Each rung gets ~45 days before you climb — checkpoints, not
+ultimatums. Escalating is not disclosing: the draft still ships no
+public detail until the coordinated window closes or a rung authorizes
+it. Log every rung change in `memory/ledger.md` like a submission.
+
 ## Always-rejected — email additions
 
 The list in `../SKILL.md` applies unchanged. Email adds three:

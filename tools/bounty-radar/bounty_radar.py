@@ -9,13 +9,20 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 log = logging.getLogger("bounty_radar")
-UA = "tokens-to-dollars-bounty-radar/0.1 (+https://github.com/tokens-to-dollars)"
+UA = "tokens-to-dollars-bounty-radar/0.2 (+https://github.com/tokens-to-dollars)"
 GH = "https://api.github.com"
 IMMUNEFI_URL = "https://immunefi.com/public-api/bounties.json"
+ALGORA_URL = "https://api.algora.io/v1/bounties"
+ALGORA_TRPC = "https://algora.io/api/trpc/bounty.list"
+OPIRE_URL = "https://api.opire.dev/rewards"
+SHERLOCK_URL = "https://audits.sherlock.xyz/api/contests"
+BBSCOPE_URL = "https://bbscope.com/api/v1/updates"
+SHERLOCK_MAX_PAGES = 50
+SHERLOCK_DEAD = {"FINISHED", "CANCELLED", "ARCHIVED"}
 GH_TIMEOUT = 15
 PER_PAGE = 40
 
@@ -30,9 +37,11 @@ FAMOUS = {
 }
 
 GH_LABELS = ["💎 Bounty", "bounty", "💰 bounty"]
+# polar.sh query removed: the platform has been dead since Apr-25, so the
+# issue-body search only surfaced stale links. federacy/issuehunt/c4/
+# hackerhive are likewise dead-or-winding-down and are not queried at all.
 ESCROW_QUERIES = [
     ('"algora.io/bounties" in:body state:open type:issue', "escrow-link:algora"),
-    ('"polar.sh" in:body state:open type:issue', "escrow-link:polar"),
 ]
 TOPIC_QUERIES = [("bug-bounty", "topic:bug-bounty"), ("bounty", "topic:bounty")]
 
@@ -134,6 +143,50 @@ def days_since(iso):
     return max(0, round((datetime.now(timezone.utc) - t).total_seconds() / 86400))
 
 
+def first_field(d, *keys):
+    for k in keys:
+        v = (d or {}).get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def iso_from_epoch(v):
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    if v > 1e12:
+        v /= 1000
+    return datetime.fromtimestamp(v, timezone.utc).isoformat(timespec="seconds")
+
+
+def cents_or_amount(v, unit):
+    n = num(v)
+    if n is None:
+        return None
+    return round(n / 100, 2) if "CENT" in str(unit or "").upper() else n
+
+
+# EV fields shared by every draft: program-stat signals (H1-style stats only
+# exist on some sources; scoring uses each only when present) plus the
+# invite_only / new_scope boosts from the wave-11 EV research.
+def ev_draft(source):
+    return {
+        "repo": "", "number": None, "title": "", "url": "",
+        "created_at": None, "comments": 0, "labels": [],
+        "amount_usd": None, "max_reward": None, "avg_bounty": None,
+        "source": source, "escrowed": False, "deadline": None,
+        "table_updated_at": None, "severity": None, "language": None,
+        "bounties_paid_90d": None, "reports_90d": None,
+        "hackers_thanked": None, "time_to_bounty_days": None,
+        "informative_rate": None, "invite_only": False, "new_scope": False,
+        "signals": {"linked_prs": 0, "reactions": 0, "source_notes": []},
+        "funding_hint": None, "trust": "likely_real", "scam_reasons": [],
+        "cross_listed": False,
+    }
+
+
 # --- GitHub drafts -----------------------------------------------------------
 
 def gh_issue_to_draft(it, source="github", note=None, escrowed=False):
@@ -141,36 +194,32 @@ def gh_issue_to_draft(it, source="github", note=None, escrowed=False):
     labels = [l.get("name") for l in it.get("labels") or [] if l.get("name")]
     reasons = detect_scam(repo, it.get("number"), it.get("title") or "")
     notes = [note] if note else []
-    return {
+    d = ev_draft(source)
+    d.update({
         "repo": repo, "number": it.get("number"),
         "title": it.get("title") or "", "url": it.get("html_url") or "",
         "created_at": it.get("created_at"), "comments": it.get("comments") or 0,
         "labels": labels, "amount_usd": parse_amount(it.get("title") or "", labels),
-        "max_reward": None, "source": source, "escrowed": escrowed,
-        "deadline": None, "table_updated_at": None,
-        "severity": None, "language": None,
-        "signals": {"linked_prs": 0,
-                    "reactions": (it.get("reactions") or {}).get("total_count") or 0,
-                    "source_notes": notes},
+        "escrowed": escrowed,
         "funding_hint": "escrowed" if escrowed else None,
         "trust": "suspect_scam" if reasons else "likely_real",
-        "scam_reasons": reasons, "cross_listed": False,
-    }
+        "scam_reasons": reasons,
+    })
+    d["signals"]["reactions"] = (it.get("reactions") or {}).get("total_count") or 0
+    d["signals"]["source_notes"] = notes
+    return d
 
 
 def gh_repo_to_draft(r, note):
-    return {
-        "repo": r.get("full_name") or "", "number": None,
+    d = ev_draft("github-extras")
+    d.update({
+        "repo": r.get("full_name") or "",
         "title": r.get("description") or "%s (bug-bounty tagged repo)" % r.get("full_name"),
         "url": r.get("html_url") or "", "created_at": r.get("pushed_at"),
-        "comments": 0, "labels": r.get("topics") or [],
-        "amount_usd": None, "max_reward": None, "source": "github-extras",
-        "escrowed": False, "deadline": None, "table_updated_at": None,
-        "severity": None, "language": None,
-        "signals": {"linked_prs": 0, "reactions": 0, "source_notes": [note]},
-        "funding_hint": None, "trust": "likely_real", "scam_reasons": [],
-        "cross_listed": False,
-    }
+        "labels": r.get("topics") or [],
+    })
+    d["signals"]["source_notes"] = [note]
+    return d
 
 
 def fetch_github_labels():
@@ -282,30 +331,231 @@ def fetch_immunefi():
         slug = p.get("slug")
         url = "https://immunefi.com/bounties/%s/" % slug if slug else p.get("websiteUrl")
         lang = p.get("language") or []
-        drafts.append({
+        d = ev_draft("immunefi")
+        d.update({
             "repo": gh_repo_from_url(p.get("githubUrl")) or project,
-            "number": None,
             "title": "%s -- Immunefi bug bounty" % project,
             "url": url or "", "created_at": p.get("launchDate") or p.get("updatedDate"),
-            "comments": 0, "labels": sorted(set(tags)),
+            "labels": sorted(set(tags)),
             "amount_usd": num(p.get("maxBounty")),
             "max_reward": num(p.get("maxBounty")),
-            "source": "immunefi", "escrowed": True,
+            "avg_bounty": num(p.get("averageBounty")) or num(p.get("avgBounty")),
+            "escrowed": True,
             "deadline": p.get("endDate"),
             "table_updated_at": p.get("updatedDate"),  # proxy: record changed -> table may have moved
-            "severity": None,
             "language": lang[0] if lang else None,
-            "signals": {"linked_prs": 0, "reactions": 0, "source_notes": notes},
-            "funding_hint": "escrowed", "trust": "likely_real",
-            "scam_reasons": [], "cross_listed": False,
+            "invite_only": bool(p.get("inviteOnly")),
+            "funding_hint": "escrowed",
         })
+        d["signals"]["source_notes"] = notes
+        drafts.append(d)
     return drafts
+
+
+# --- Keyless escrow / contest platforms --------------------------------------
+
+def algora_items(data):
+    if isinstance(data, dict):
+        return data.get("items") or data.get("bounties") or []
+    if isinstance(data, list):
+        for el in data:
+            j = (((el or {}).get("result") or {}).get("data") or {}).get("json")
+            if isinstance(j, dict):
+                return j.get("items") or []
+        return data
+    return []
+
+
+def algora_amount(it):
+    reward = it.get("reward")
+    if isinstance(reward, dict):
+        fmt = reward.get("formatted")
+        if isinstance(fmt, str):
+            m = re.search(r"([\d,]+(?:\.\d+)?)", fmt)
+            if m:
+                return num(m.group(1).replace(",", ""))
+        return cents_or_amount(reward.get("amount"), reward.get("unit"))
+    for k in ("reward_cents", "amount", "bounty_amount"):
+        if it.get(k) is not None:
+            unit = "CENT" if k == "reward_cents" else it.get("unit")
+            return cents_or_amount(it.get(k), unit)
+    return None
+
+
+# Algora's documented REST path (api.algora.io/v1/bounties) now redirects and
+# 404s — the live public surface is its tRPC router, same call @algora/sdk
+# makes. Try REST first, fall back to tRPC; either may legitimately return []
+# (the public board has been thin since the payout pivot).
+def fetch_algora():
+    try:
+        items = algora_items(fetch_json(
+            "%s?status=active&limit=50" % ALGORA_URL, 20))
+    except Exception as e:
+        log.info("algora REST endpoint failed (%s); trying tRPC router", e)
+        inp = quote('{"0":{"json":{"limit":50}}}')
+        items = algora_items(fetch_json(
+            "%s?batch=1&input=%s" % (ALGORA_TRPC, inp), 20))
+    drafts = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        task = it.get("task") if isinstance(it.get("task"), dict) else it
+        url = (first_field(task, "url", "html_url", "github_url", "issue_url")
+               or it.get("url") or "")
+        if not url:
+            continue
+        org = (first_field(it.get("org") or {}, "handle", "name")
+               or first_field(it.get("organization") or {}, "handle", "name")
+               or it.get("org"))
+        created = first_field(it, "created_at", "createdAt", "created")
+        d = ev_draft("algora")
+        d.update({
+            "repo": gh_repo_from_url(url) or (str(org) if org else url),
+            "number": task.get("number"),
+            "title": task.get("title") or it.get("title") or "",
+            "url": url,
+            "created_at": (created if isinstance(created, str)
+                           else iso_from_epoch(created)),
+            "amount_usd": algora_amount(it),
+            "escrowed": True, "funding_hint": "escrowed",
+        })
+        d["signals"]["source_notes"] = ["algora-bounty"]
+        drafts.append(d)
+    return drafts
+
+
+# Opire rewards are promised rather than provably pre-funded -> funding stays
+# "claimed", not "escrowed". Competition mapping: tryingUsers (hunters who
+# said they're working it) -> comments proxy; claimerUsers (claimed, i.e.
+# an attempt in flight) -> linked_prs proxy.
+def fetch_opire():
+    data = fetch_json(OPIRE_URL, 20)
+    items = data if isinstance(data, list) else (data or {}).get("rewards") or []
+    drafts = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        url = it.get("url") or ""
+        if not url:
+            continue
+        price = it.get("pendingPrice") or {}
+        org = (it.get("organization") or {}).get("name")
+        project = it.get("project") or {}
+        langs = it.get("programmingLanguages") or []
+        d = ev_draft("opire")
+        d.update({
+            "repo": (gh_repo_from_url(project.get("url") or url)
+                     or (str(org) if org else url)),
+            "title": it.get("title") or "",
+            "url": url,
+            "created_at": iso_from_epoch(it.get("createdAt")),
+            "comments": len(it.get("tryingUsers") or []),
+            "amount_usd": cents_or_amount(price.get("value"), price.get("unit")),
+            "language": langs[0] if langs else None,
+            "funding_hint": "claimed",
+        })
+        d["signals"]["linked_prs"] = len(it.get("claimerUsers") or [])
+        d["signals"]["source_notes"] = ["opire-reward"]
+        drafts.append(d)
+    return drafts
+
+
+# Keyless paginated contest feed ({page, next_page, items}). Prize pools are
+# USDC staked up front -> escrowed. A contest that started within 14 days is
+# fresh scope -> new_scope EV boost.
+def fetch_sherlock():
+    drafts = []
+    for page in range(1, SHERLOCK_MAX_PAGES + 1):
+        data = fetch_json("%s?page=%d" % (SHERLOCK_URL, page), 20)
+        items = data.get("items") or []
+        for c in items:
+            if not isinstance(c, dict):
+                continue
+            if c.get("private") or c.get("status") in SHERLOCK_DEAD:
+                continue
+            pool = num(c.get("prize_pool")) or num(c.get("rewards"))
+            started = iso_from_epoch(c.get("starts_at"))
+            d = ev_draft("sherlock")
+            d.update({
+                "repo": c.get("title") or "sherlock-contest-%s" % c.get("id"),
+                "title": "%s -- Sherlock contest" % c.get("title"),
+                "url": "https://audits.sherlock.xyz/contests/%s" % c.get("id"),
+                "created_at": started,
+                "amount_usd": num(c.get("rewards")) or pool,
+                "max_reward": pool,
+                "labels": [t for t in (c.get("type_label"), c.get("token")) if t],
+                "deadline": iso_from_epoch(c.get("ends_at")),
+                "escrowed": True, "funding_hint": "escrowed",
+                "new_scope": (days_since(started) or 999) <= 14,
+            })
+            d["signals"]["source_notes"] = [
+                "sherlock-contest:%s" % (c.get("status") or "?").lower()]
+            drafts.append(d)
+        if not data.get("next_page"):
+            break
+    return drafts
+
+
+# bbscope /api/v1/updates = cross-platform scope-change feed (h1/bc/intigriti/
+# ywh). program_added entries become draft listings; every update's handle +
+# program_url host lands in _BBSCOPE_FRESH so drafts already found via other
+# sources get the new_scope boost when their program just changed scope.
+_BBSCOPE_FRESH = set()
+
+
+def fetch_bbscope():
+    global _BBSCOPE_FRESH
+    _BBSCOPE_FRESH = set()
+    data = fetch_json("%s?page=1" % BBSCOPE_URL, 20)
+    drafts = []
+    for u in data.get("updates") or []:
+        if not isinstance(u, dict):
+            continue
+        host = urlparse(u.get("program_url") or "").netloc.lower()
+        for key in (u.get("handle"), host or None):
+            if key:
+                _BBSCOPE_FRESH.add(str(key).lower())
+        if u.get("type") != "program_added" or not u.get("program_url"):
+            continue
+        d = ev_draft("bbscope")
+        d.update({
+            "repo": u.get("handle") or u["program_url"],
+            "title": "%s -- new program on %s" % (u.get("handle"), u.get("platform")),
+            "url": u["program_url"],
+            "created_at": u.get("timestamp"),
+            "new_scope": True,
+            "funding_hint": "claimed",
+        })
+        d["signals"]["source_notes"] = ["bbscope:%s" % u.get("platform")]
+        drafts.append(d)
+    return drafts
+
+
+def mark_fresh_scope(kept):
+    if not _BBSCOPE_FRESH:
+        return
+    for d in kept:
+        if d.get("new_scope"):
+            continue
+        host = urlparse(d.get("url") or "").netloc.lower()
+        _, name, _has = repo_parts(d)
+        hit = (host in _BBSCOPE_FRESH
+               or norm(name) in _BBSCOPE_FRESH
+               or norm(d.get("repo")) in _BBSCOPE_FRESH
+               or bool(tokens(name) & _BBSCOPE_FRESH))
+        if hit:
+            d["new_scope"] = True
+            d["signals"]["source_notes"].append("fresh-scope:bbscope")
 
 
 SOURCES = {
     "github": fetch_github_labels,
     "github-extras": fetch_github_extras,
     "immunefi": fetch_immunefi,
+    "algora": fetch_algora,
+    "opire": fetch_opire,
+    "sherlock": fetch_sherlock,
+    "bbscope": fetch_bbscope,
 }
 
 # --- Dedupe + cross-listing (registry.ts port) -------------------------------
@@ -351,22 +601,27 @@ def norm_url(u):
 def richness(d):
     return ((d.get("amount_usd") is not None) * 4
             + (d.get("max_reward") is not None) * 3
+            + (d.get("avg_bounty") is not None) * 2
             + bool(d.get("deadline")) * 2
             + (d.get("number") is not None)
             + min(d.get("comments") or 0, 2))
 
 
 def merge_fields(keep, lose):
-    keep["escrowed"] = keep["escrowed"] or lose["escrowed"]
+    keep["escrowed"] = keep.get("escrowed") or lose.get("escrowed")
     keep["comments"] = max(keep["comments"], lose["comments"])
     keep["labels"] = sorted(set(keep["labels"]) | set(lose["labels"]))
     keep["scam_reasons"] = sorted(set(keep["scam_reasons"]) | set(lose["scam_reasons"]))
+    keep["invite_only"] = keep.get("invite_only") or lose.get("invite_only")
+    keep["new_scope"] = keep.get("new_scope") or lose.get("new_scope")
     if lose.get("trust") == "suspect_scam":
         keep["trust"] = "suspect_scam"
     if keep.get("funding_hint") != "escrowed" and lose.get("funding_hint"):
         keep["funding_hint"] = lose["funding_hint"]
-    for k in ("deadline", "amount_usd", "max_reward", "severity", "created_at",
-              "number", "language", "table_updated_at"):
+    for k in ("deadline", "amount_usd", "max_reward", "avg_bounty", "severity",
+              "created_at", "number", "language", "table_updated_at",
+              "bounties_paid_90d", "reports_90d", "hackers_thanked",
+              "time_to_bounty_days", "informative_rate"):
         if keep.get(k) is None:
             keep[k] = lose.get(k)
     ks, ls = keep["signals"], lose["signals"]
@@ -425,16 +680,18 @@ def dedupe_and_flag(drafts):
     return merged
 
 
-# --- Scoring (scoring.ts port) ----------------------------------------------
+# --- Scoring (scoring.ts port + wave-11 EV deltas) ---------------------------
 # comments -> up to 40 (4/pt); linked_prs -> up to 36 (12/pr);
 # reactions -> up to 8 (2/pt); cross_listed +15; source_notes +2 each cap 10;
-# freshness <2d +8.
+# hackers_thanked -> up to 12 (1/25 thanked: big thanked pools = crowded
+# hunting ground); freshness <2d +8.
 
 def score_competition(comments, linked_prs, reactions, age_days,
-                      cross_listed, source_notes):
+                      cross_listed, source_notes, hackers_thanked=None):
     score = (min(comments * 4, 40) + min(linked_prs * 12, 36)
              + min(reactions * 2, 8) + (15 if cross_listed else 0)
-             + min(len(source_notes) * 2, 10))
+             + min(len(source_notes) * 2, 10)
+             + min((hackers_thanked or 0) / 25, 12))
     if age_days is not None and age_days < 2:
         score += 8
     score = max(0, min(100, round(score)))
@@ -453,17 +710,59 @@ def classify_funding(d, repo_has_history):
     return "unknown"
 
 
+# EV multipliers (wave-11 radar research). Applied to value_score only when
+# the underlying field exists; factors are emitted per record for audit.
+#   invite_only x1.15     gated pool -> thinner competition than score shows
+#   new_scope   x1.25     fresh attack surface; hunters haven't landed yet
+#   time_to_bounty        slow-paying program -> up to 0.5x decay over 365d
+#   informative_rate      report-closes-as-informative fraction -> 1-rate, floored 0.4
+#   bounty_velocity       paid_90d/reports_90d -> 0.5+v capped 1.3 (pays or starves)
+def bounty_velocity_of(d):
+    paid, reps = d.get("bounties_paid_90d"), d.get("reports_90d")
+    if paid is None or not reps:
+        return None
+    return round(paid / reps, 3)
+
+
+def ev_factors(d, velocity):
+    f = {}
+    if d.get("invite_only"):
+        f["invite_only"] = 1.15
+    if d.get("new_scope"):
+        f["new_scope"] = 1.25
+    ttb = d.get("time_to_bounty_days")
+    if ttb is not None:
+        f["time_to_bounty"] = round(max(0.5, 1 - (ttb or 0) / 365), 3)
+    ir = d.get("informative_rate")
+    if ir is not None:
+        ir = min(1.0, ir / 100 if ir > 1 else ir)
+        f["informative_rate"] = round(max(0.4, 1 - ir), 3)
+    if velocity is not None:
+        f["bounty_velocity"] = round(min(1.3, 0.5 + velocity), 3)
+    return f
+
+
 def to_bounty(d, repo_has_history):
     age = days_since(d.get("created_at"))
     sig = d["signals"]
     score, band = score_competition(
         d["comments"], sig["linked_prs"], sig["reactions"], age,
-        d["cross_listed"], sig["source_notes"])
-    reward = d["amount_usd"] if d["amount_usd"] is not None else d["max_reward"]
+        d["cross_listed"], sig["source_notes"], d.get("hackers_thanked"))
+    # avg_bounty beats max_reward where a source reports real payout means;
+    # a headline max is a ceiling, not an expectation.
+    reward = (d["amount_usd"] if d["amount_usd"] is not None
+              else d.get("avg_bounty") if d.get("avg_bounty") is not None
+              else d["max_reward"])
+    velocity = bounty_velocity_of(d)
+    factors = ev_factors(d, velocity)
+    mult = 1.0
+    for v in factors.values():
+        mult *= v
     return {
         "source": d["source"], "url": d["url"], "title": d["title"],
         "repo": d["repo"], "number": d["number"],
         "reward_usd": reward, "amount_usd": d["amount_usd"],
+        "avg_bounty": d.get("avg_bounty"),
         "max_reward": d["max_reward"], "funding": classify_funding(d, repo_has_history),
         "escrowed": d["escrowed"], "competition_score": score,
         "competition_band": band,
@@ -471,14 +770,21 @@ def to_bounty(d, repo_has_history):
             "comments": d["comments"], "linked_prs": sig["linked_prs"],
             "reactions": sig["reactions"], "age_days": age,
             "cross_listed": d["cross_listed"], "source_notes": sig["source_notes"],
+            "hackers_thanked": d.get("hackers_thanked"),
         },
+        "bounty_velocity": velocity,
+        "invite_only": bool(d.get("invite_only")),
+        "new_scope": bool(d.get("new_scope")),
+        "time_to_bounty_days": d.get("time_to_bounty_days"),
+        "informative_rate": d.get("informative_rate"),
+        "ev_factors": factors,
         "scam_flags": d["scam_reasons"], "trust": d["trust"],
         "discovered_at": d["created_at"], "age_days": age,
         "deadline": d["deadline"], "labels": d["labels"],
         "table_updated_at": d.get("table_updated_at"),
         "comments": d["comments"], "cross_listed": d["cross_listed"],
         "language": d["language"], "severity": d["severity"],
-        "value_score": round((reward or 0) * (1 - score / 100), 2),
+        "value_score": round((reward or 0) * (1 - score / 100) * mult, 2),
     }
 
 
@@ -572,14 +878,17 @@ def update_snapshots(kept, snap_dir, run_ts):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Aggregate funded bug bounties (GitHub issues + Immunefi), "
-                    "scam-filter, competition-score, and value-rank them.")
+        description="Aggregate funded bug bounties (GitHub issues, Immunefi, "
+                    "algora/opire/sherlock keyless feeds, bbscope fresh scope), "
+                    "scam-filter, competition-score, and EV-rank them.")
     ap.add_argument("--min-reward", type=float, default=None,
                     help="keep bounties with reward_usd >= N")
     ap.add_argument("--max-competition", type=float, default=None,
                     help="keep bounties with competition_score <= N (0-100)")
-    ap.add_argument("--sources", default="github,github-extras,immunefi",
-                    help="comma list of: github, github-extras, immunefi")
+    ap.add_argument("--sources",
+                    default="github,github-extras,immunefi,algora,opire,sherlock,bbscope",
+                    help="comma list of: github, github-extras, immunefi, "
+                         "algora, opire, sherlock, bbscope")
     ap.add_argument("--include-suspect", action="store_true",
                     help="keep scam-suspect listings (dropped by default)")
     ap.add_argument("--out-dir", default="./out", help="output directory")
@@ -622,12 +931,15 @@ def main():
     if not args.include_suspect:
         kept = [d for d in kept if d.get("trust", "likely_real") == "likely_real"]
 
+    mark_fresh_scope(kept)
+
     trends, triggers = update_snapshots(kept, args.snapshot_dir,
                                         index["generated_at"])
 
     if args.min_reward is not None:
         kept = [d for d in kept
                 if (d["amount_usd"] if d["amount_usd"] is not None
+                    else d.get("avg_bounty") if d.get("avg_bounty") is not None
                     else d["max_reward"] or 0) >= args.min_reward]
 
     enrich_linked_prs(kept)
@@ -656,7 +968,9 @@ def main():
             f.write(json.dumps(t, ensure_ascii=False) + "\n")
 
     index["total_bounties"] = len(out)
-    index["ranking"] = ("reward_usd * (1 - competition_score/100) "
+    index["ranking"] = ("reward_usd(amount|avg|max) * (1 - competition_score/100) "
+                        "* ev_factors(invite_only/new_scope/time_to_bounty/"
+                        "informative_rate/bounty_velocity) "
                         "* trend_weight(up 1.15 / down 0.78), ties by age asc")
     index["snapshot_dir"] = str(args.snapshot_dir)
     index["table_changes"] = len(triggers)

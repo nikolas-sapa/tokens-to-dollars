@@ -7,10 +7,11 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 log = logging.getLogger("ingest_scope")
-UA = "tokens-to-dollars-ingest/0.1 (+https://github.com/tokens-to-dollars)"
+UA = "tokens-to-dollars-ingest/0.2 (+https://github.com/tokens-to-dollars)"
 
 ARKADIYT = "https://raw.githubusercontent.com/arkadiyt/bounty-targets-data/main/data/%s_data.json"
 SOURCES = [
@@ -23,6 +24,9 @@ SOURCES = [
     ("diodb",               "independent", "https://raw.githubusercontent.com/disclose/diodb/master/program-list.json", "diodb"),
     ("immunefi",            "immunefi",    "https://immunefi.com/public-api/bounties.json", "immunefi"),
 ]
+
+BBSCOPE_UPDATES = "https://bbscope.com/api/v1/updates"
+SECTXT_PATH = "/.well-known/security.txt"
 
 SH = {"full": True, "yes": True, "partial": True, "true": True,
       "none": False, "no": False, "false": False}
@@ -84,6 +88,13 @@ def base(platform, source, ts):
                     "languages": None},
         "disclosure_timeline_days": None,
         "launch_date": None,
+        "offers_bounty": None,
+        "offers_swag": None,
+        "hall_of_fame": None,
+        "public_disclosure": None,
+        "policy_url_status": None,
+        "securitytxt": None,
+        "fresh_scope_at": None,
         "source": source,
         "fetched_at": ts,
     }
@@ -162,6 +173,16 @@ def norm_diodb(platform, data, ts, source):
         r["disclosure_timeline_days"] = p.get("disclosure_timeline_days") or None
         v = p.get("launch_date")
         r["launch_date"] = v.strip() or None if isinstance(v, str) else (v or None)
+        r["offers_bounty"] = sh_bool(p.get("offers_bounty"))
+        r["offers_swag"] = sh_bool(p.get("offers_swag"))
+        hof = p.get("hall_of_fame")
+        r["hall_of_fame"] = (True if isinstance(hof, str)
+                             and hof.strip().lower().startswith("http")
+                             else sh_bool(hof))
+        v = p.get("public_disclosure")
+        r["public_disclosure"] = (v.strip().lower() or None) if isinstance(v, str) else None
+        v = p.get("policy_url_status")
+        r["policy_url_status"] = (v.strip().lower() or None) if isinstance(v, str) else None
         out.append(r)
     return out
 
@@ -217,7 +238,10 @@ def dedupe_key(r):
 
 def merge(a, b):
     for k in ("handle", "name", "url", "max_payout", "safe_harbor",
-              "testing_policy_url", "disclosure_timeline_days", "launch_date"):
+              "testing_policy_url", "disclosure_timeline_days", "launch_date",
+              "offers_bounty", "offers_swag", "hall_of_fame",
+              "public_disclosure", "policy_url_status", "securitytxt",
+              "fresh_scope_at"):
         if a.get(k) in (None, "", []):
             a[k] = b.get(k)
     ca = a.get("contact") or {}
@@ -238,12 +262,133 @@ def merge(a, b):
     return a
 
 
+# --- security.txt (RFC 9116) -------------------------------------------------
+# Opt-in pass over unique program hosts. Expires in the past = liveness flag:
+# the operator let the file lapse, a dead-program signal. Fills contact{}
+# fields only where still empty so diodb/policy data wins on conflict.
+
+def fetch_text(url, timeout):
+    req = Request(url, headers={"User-Agent": UA, "Accept": "text/plain,*/*"})
+    with urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+
+def parse_securitytxt(text):
+    out = {"contacts": [], "expires": None, "policy": [], "encryption": [],
+           "languages": None, "acknowledgments": []}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        k, v = k.strip().lower(), v.strip()
+        if not v:
+            continue
+        if k == "contact":
+            out["contacts"].append(v)
+        elif k == "expires":
+            out["expires"] = v
+        elif k == "policy":
+            out["policy"].append(v)
+        elif k == "encryption":
+            out["encryption"].append(v)
+        elif k == "preferred-languages":
+            out["languages"] = v
+        elif k in ("acknowledgments", "acknowledgements"):
+            out["acknowledgments"].append(v)
+    return out
+
+
+def sectxt_expired(iso):
+    try:
+        t = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t < datetime.now(timezone.utc)
+
+
+def url_host(u):
+    if not u:
+        return ""
+    return urlparse(u if "//" in u else "//" + u).netloc.split(":")[0].lower()
+
+
+def enrich_securitytxt(recs, limit, timeout):
+    hosts = {}
+    for r in recs:
+        host = url_host(r.get("testing_policy_url") or r.get("url"))
+        if host:
+            hosts.setdefault(host, []).append(r)
+    stats = {"hosts_checked": 0, "found": 0, "expired": 0, "errors": 0}
+    for host, members in sorted(hosts.items())[:limit]:
+        surl = "https://%s%s" % (host, SECTXT_PATH)
+        stats["hosts_checked"] += 1
+        try:
+            parsed = parse_securitytxt(fetch_text(surl, timeout))
+        except Exception as e:
+            stats["errors"] += 1
+            log.info("securitytxt %s: %s", host, e)
+            continue
+        if not any(parsed.values()):
+            continue
+        stats["found"] += 1
+        exp = sectxt_expired(parsed["expires"]) if parsed["expires"] else None
+        if exp:
+            stats["expired"] += 1
+        for r in members:
+            mail = next((c for c in parsed["contacts"]
+                         if c.lower().startswith("mailto:")), None)
+            web = next((c for c in parsed["contacts"]
+                        if c.lower().startswith("http")), None)
+            r["securitytxt"] = {
+                "url": surl,
+                "contact": parsed["contacts"][0] if parsed["contacts"] else None,
+                "expires": parsed["expires"], "expired": exp,
+                "policy": parsed["policy"][0] if parsed["policy"] else None,
+                "encryption": (parsed["encryption"][0]
+                               if parsed["encryption"] else None),
+                "languages": parsed["languages"]}
+            c = r["contact"]
+            if mail and not c.get("email"):
+                c["email"] = mail[7:]
+            if web and not c.get("url"):
+                c["url"] = web
+            if parsed["encryption"] and not c.get("encryption"):
+                c["encryption"] = parsed["encryption"][0]
+            if parsed["languages"] and not c.get("languages"):
+                c["languages"] = parsed["languages"]
+            if not c.get("securitytxt"):
+                c["securitytxt"] = surl
+            if not c.get("source"):
+                c["source"] = "securitytxt"
+    return stats
+
+
+# --- bbscope fresh-scope feed ------------------------------------------------
+# Cross-platform scope-change firehose. Emitted as scope-updates.jsonl trigger
+# lines consumable by change-detect (`detect.py add <program_url>`); programs
+# whose program_url matches get fresh_scope_at stamped on their record.
+
+def fetch_scope_updates(url, timeout):
+    data = fetch_json(url, timeout)
+    return (data.get("updates") or []) if isinstance(data, dict) else []
+
+
 def main():
     ap = argparse.ArgumentParser(description="Ingest public bug-bounty scope feeds into a normalized program catalog.")
     ap.add_argument("--out-dir", default="./out", help="output directory (default ./out)")
     ap.add_argument("--platforms", default=None,
                     help="comma-separated platform filter, e.g. hackerone,immunefi")
     ap.add_argument("--timeout", type=float, default=30, help="per-fetch timeout seconds (default 30)")
+    ap.add_argument("--securitytxt", action="store_true",
+                    help="probe /.well-known/security.txt per unique program "
+                         "host; fills contact{} and flags lapsed Expires")
+    ap.add_argument("--securitytxt-limit", type=int, default=100,
+                    help="max distinct hosts to probe (default 100)")
+    ap.add_argument("--securitytxt-timeout", type=float, default=10,
+                    help="per-host fetch timeout seconds (default 10)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
@@ -267,6 +412,12 @@ def main():
                 programs[k] = merge(programs[k], r) if k in programs else r
             entry["n_programs"] = len(recs)
             entry["fetched_at"] = ts
+            if kind == "diodb" and recs:
+                n_pay = sum(1 for r in recs if r.get("offers_bounty"))
+                entry["pay_vs_vdp"] = {
+                    "offers_bounty": n_pay,
+                    "vdp_only": len(recs) - n_pay,
+                    "bounty_fraction": round(n_pay / len(recs), 3)}
             log.info("%s: %d programs", name, len(recs))
         except Exception as e:
             entry["status"] = "error"
@@ -277,6 +428,50 @@ def main():
     recs = list(programs.values())
     if want:
         recs = [r for r in recs if r["platform"] in want]
+
+    if not want or "bbscope" in want:
+        entry = {"source": "bbscope-updates", "url": BBSCOPE_UPDATES,
+                 "status": "ok"}
+        try:
+            updates = fetch_scope_updates(BBSCOPE_UPDATES, args.timeout)
+            latest = {}
+            lines = []
+            for u in updates:
+                purl = u.get("program_url")
+                ts = u.get("timestamp")
+                lines.append({"kind": "scope-change", "type": u.get("type"),
+                              "platform": u.get("platform"),
+                              "handle": u.get("handle"), "program_url": purl,
+                              "target": u.get("target"),
+                              "scope_type": u.get("scope_type"),
+                              "category": u.get("category"), "at": ts})
+                key = (purl or "").lower().rstrip("/")
+                if key and (latest.get(key) or "") < (ts or ""):
+                    latest[key] = ts
+            n_fresh = 0
+            for r in recs:
+                key = (r.get("url") or "").lower().rstrip("/")
+                if key in latest:
+                    r["fresh_scope_at"] = latest[key]
+                    n_fresh += 1
+            with open(out_dir / "scope-updates.jsonl", "w") as f:
+                for l in lines:
+                    f.write(json.dumps(l, ensure_ascii=False) + "\n")
+            entry["n_updates"] = len(lines)
+            entry["programs_flagged"] = n_fresh
+            log.info("bbscope-updates: %d scope changes, %d programs flagged",
+                     len(lines), n_fresh)
+        except Exception as e:
+            entry["status"] = "error"
+            entry["error"] = "%s: %s" % (type(e).__name__, e)
+            log.warning("bbscope-updates fetch failed: %s", e)
+        index["sources"].append(entry)
+
+    if args.securitytxt:
+        index["securitytxt"] = enrich_securitytxt(
+            recs, args.securitytxt_limit, args.securitytxt_timeout)
+        log.info("securitytxt: %s", index["securitytxt"])
+
     index["total_programs"] = len(recs)
 
     (out_dir / "programs.json").write_text(json.dumps(recs, indent=2, ensure_ascii=False) + "\n")

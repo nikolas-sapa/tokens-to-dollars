@@ -1,8 +1,9 @@
 # bounty-radar
 
 Funded-bounty intelligence: aggregates live, money-backed bounties (GitHub
-issue bounties, escrow-linked issues, Immunefi programs), filters out scams,
-scores how contested each one already is, and ranks them by expected value.
+issue bounties, escrow-linked issues, Immunefi programs, algora/opire issue
+rewards, Sherlock contests, bbscope fresh-scope), filters out scams, scores
+how contested each one already is, and ranks them by expected value.
 Python 3.9+, stdlib only. Ported from the x402-bounty-radar TS service.
 
 ## Usage
@@ -10,14 +11,14 @@ Python 3.9+, stdlib only. Ported from the x402-bounty-radar TS service.
 ```sh
 python3 bounty_radar.py                          # all sources -> ./out
 python3 bounty_radar.py --sources immunefi       # keyless, most reliable
-python3 bounty_radar.py --sources github         # issue-label search only
+python3 bounty_radar.py --sources opire,bbscope  # keyless issue rewards + fresh scope
 python3 bounty_radar.py --min-reward 1000 --max-competition 30
 python3 bounty_radar.py --out-dir data/radar
 ```
 
 | arg | default | effect |
 |---|---|---|
-| `--sources` | `github,github-extras,immunefi` | comma list of adapters to run |
+| `--sources` | `github,github-extras,immunefi,algora,opire,sherlock,bbscope` | comma list of adapters to run |
 | `--min-reward` | none | keep bounties with `reward_usd >= N` |
 | `--max-competition` | none | keep bounties with `competition_score <= N` (0-100) |
 | `--include-suspect` | off | keep scam-suspect listings (dropped by default) |
@@ -32,8 +33,17 @@ Every source fails soft: a dead adapter logs to stderr, is marked `error` in
 | source | endpoint | auth | notes |
 |---|---|---|---|
 | `github` | `api.github.com/search/issues` | none needed; `GH_TOKEN`/`GITHUB_TOKEN` honored | label search: `💎 Bounty`, `bounty`, `💰 bounty` on open issues |
-| `github-extras` | `api.github.com/search/{issues,repositories}` | same | issue bodies linking escrow platforms (`algora.io/bounties`, `polar.sh` => `escrowed`) + `topic:bug-bounty`/`topic:bounty` repos as program-level listings |
-| `immunefi` | `immunefi.com/public-api/bounties.json` | none | live programs (paused skipped); `maxBounty` => `reward_usd`; `endDate` => `deadline`; always `escrowed` (funds locked on-platform) |
+| `github-extras` | `api.github.com/search/{issues,repositories}` | same | issue bodies linking escrow platforms (`algora.io/bounties` => `escrowed`) + `topic:bug-bounty`/`topic:bounty` repos as program-level listings |
+| `immunefi` | `immunefi.com/public-api/bounties.json` | none | live programs (paused skipped); `maxBounty`/`averageBounty` => `reward_usd`; `endDate` => `deadline`; always `escrowed` (funds locked on-platform); `inviteOnly` => `invite_only` EV boost |
+| `algora` | `api.algora.io/v1/bounties`, fallback `algora.io/api/trpc/bounty.list` | none | escrowed issue bounties; REST path now 404s (board pivot) so the tRPC router is the live surface — currently returns an empty items list, kept wired for when it repopulates |
+| `opire` | `api.opire.dev/rewards` | none | GitHub issue rewards; `pendingPrice` USD_CENT => `amount_usd`; `tryingUsers` => comments proxy, `claimerUsers` => linked-PR proxy; funding `claimed` (payout promised, not provably escrowed) |
+| `sherlock` | `audits.sherlock.xyz/api/contests?page=N` | none | keyless paginated; skips `private` and `FINISHED`/`CANCELLED`/`ARCHIVED`; USDC `prize_pool`/`rewards` => amounts, escrowed; contests <=14d old => `new_scope`; feed currently lists only FINISHED contests, so expect 0 drafts until a live one posts |
+| `bbscope` | `bbscope.com/api/v1/updates?page=1` | none | cross-platform scope-change feed (h1/bc/intigriti/ywh); `program_added` updates => drafts; every update's handle+host feeds the `new_scope` matcher for drafts from other sources |
+
+**Dead / stale feeds — do not re-add:** `polar.sh` (dead since Apr-25; the
+github-extras issue-body query was removed), `federacy` (dead), `issuehunt`
+(stale), `code4rena`/`c4` (winding down), `hackerhive` (dead). If any of
+these reappears upstream it needs a fresh adapter, not a re-enable.
 
 Unauthenticated GitHub search is ~10 req/min. A full run costs ~7 requests, so
 back-to-back runs 403 — the adapters degrade to what succeeded rather than
@@ -45,8 +55,11 @@ funding, max 10 repos).
 ## Outputs
 
 - `bounties.jsonl` — one record per line, value-ranked:
-  `value_score = reward_usd * (1 - competition_score/100) * trend_weight`,
-  ties by `age_days` ascending. Read top-to-bottom.
+  `value_score = reward_usd * (1 - competition_score/100) *
+  product(ev_factors) * trend_weight`, ties by `age_days` ascending.
+  `reward_usd` = `amount_usd` if set, else `avg_bounty`, else `max_reward` —
+  a real payout mean beats a headline ceiling where a source reports both.
+  Read top-to-bottom.
 - `index.json` — `generated_at`, per-source `{source, status, n_drafts,
   error?}`, `total_drafts`, `merged_drafts`, `total_bounties`,
   `snapshot_dir`, `table_changes`, `reward_trends` counts.
@@ -61,20 +74,28 @@ funding, max 10 repos).
 
 ```json
 {
-  "source": "github | github-extras | immunefi",
+  "source": "github | github-extras | immunefi | algora | opire | sherlock | bbscope",
   "url": "https://...",
   "title": "...",
   "repo": "owner/name or program name",
   "number": 123,
   "reward_usd": 5000,
   "amount_usd": 5000,
+  "avg_bounty": null,
   "max_reward": null,
   "funding": "escrowed | verified-history | claimed | unknown",
   "escrowed": true,
   "competition_score": 25,
   "competition_band": "low | medium | high",
   "competition_signals": {"comments": 3, "linked_prs": 1, "reactions": 4,
-    "age_days": 5, "cross_listed": true, "source_notes": ["escrow-link:algora"]},
+    "age_days": 5, "cross_listed": true, "source_notes": ["escrow-link:algora"],
+    "hackers_thanked": null},
+  "bounty_velocity": null,
+  "invite_only": false,
+  "new_scope": true,
+  "time_to_bounty_days": null,
+  "informative_rate": null,
+  "ev_factors": {"new_scope": 1.25},
   "scam_flags": [],
   "trust": "likely_real | suspect_scam",
   "discovered_at": "ISO date the listing appeared upstream (source created_at)",
@@ -92,9 +113,31 @@ funding, max 10 repos).
 ```
 
 `funding` ranks proof of money: `escrowed` (funds provably locked on a
-platform — Immunefi, algora/polar links) > `verified-history` (this repo has
-closed "bounty"-titled issues = paid before; token-gated) > `claimed` (a
-dollar amount is asserted but unverified) > `unknown`.
+platform — Immunefi, Sherlock USDC pools, algora) > `verified-history` (this
+repo has closed "bounty"-titled issues = paid before; token-gated) >
+`claimed` (a dollar amount is asserted but unverified — opire rewards,
+bbscope listings) > `unknown`.
+
+## Expected-value factors
+
+`value_score` multiplies `reward_usd * (1 - competition_score/100)` by every
+applicable factor below (emitted per record as `ev_factors`), then by the
+reward-table `trend_weight`. Each factor applies only when the underlying
+field exists — today the H1-style program stats (`bounties_paid_90d`,
+`reports_90d`, `hackers_thanked`, `time_to_bounty_days`, `informative_rate`)
+are populated only by sources that expose them; the rest flow through as
+`null` and contribute no factor.
+
+| field | factor | rationale |
+|---|---|---|
+| `invite_only` | x1.15 | gated hunter pool is thinner than visible signals show |
+| `new_scope` | x1.25 | fresh attack surface (bbscope update or contest <=14d); swarm hasn't landed |
+| `time_to_bounty_days` | `max(0.5, 1 - days/365)` | slow-paying programs devalue the listing |
+| `informative_rate` | `max(0.4, 1 - rate)` (0-1 or 0-100 input) | informative-prone programs burn submissions |
+| `bounty_velocity` = `bounties_paid_90d / reports_90d` | `min(1.3, 0.5 + v)` | fraction of reports that actually pay |
+
+`bounty_velocity` is also emitted as a standalone field: a program paying 40%
+of recent reports is a different target than one paying 2%.
 
 ## Competition score (0-100)
 
@@ -107,6 +150,7 @@ How contested the bounty already is — the moat metric. Signals:
 | reactions | 2/pt, cap 8 — watcher proxy |
 | cross-listed on >1 source | +15 — wider hunter reach |
 | source notes (escrow link, invite-only, topic tag) | +2 each, cap 10 |
+| hackers_thanked | 1/25 thanked, cap 12 — a big thanked pool means a crowded program |
 | fresh (<2 days old) | +8 — swarm hasn't landed yet but will |
 
 `competition_band`: <34 low, <67 medium, else high. `competition_score` feeds
