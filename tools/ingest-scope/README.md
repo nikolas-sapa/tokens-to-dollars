@@ -16,7 +16,7 @@ python3 ingest_scope.py --timeout 10
 | arg | default | effect |
 |---|---|---|
 | `--out-dir` | `./out` | output directory, created if missing |
-| `--platforms` | all | comma-separated platform filter (skips unlisted feeds and emitted records; `bbscope` selects the scope-updates feed) |
+| `--platforms` | all | comma-separated filter on platform or source name (e.g. `hackerone`, `immunefi`, `diodb`, `lissy93`, `arkadiyt`, `community`, `arkadiyt-hackerone`; skips unlisted feeds and emitted records; `bbscope` selects the scope-updates feed) |
 | `--timeout` | `30` | per-fetch timeout in seconds |
 | `--securitytxt` | off | probe `/.well-known/security.txt` per unique program host; fills `contact{}` and `securitytxt` block, flags lapsed `Expires` |
 | `--securitytxt-limit` | `100` | max distinct hosts to probe (alphabetical, deterministic) |

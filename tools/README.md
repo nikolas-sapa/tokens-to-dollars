@@ -96,6 +96,8 @@ before a draft is written.
 `engagements.md` index, `ledger.md` with its real table headers, plus
 `targets/`, `reports/`, `data/`, `knowledge/` directories. Idempotent; run
 it once after cloning so the orchestrator's append paths exist.
+Engagement scratch material (fetched specs, page dumps, downloaded
+artifacts) goes to `memory/targets/<program>/work/` — never `/tmp`.
 
 ## content-scan
 

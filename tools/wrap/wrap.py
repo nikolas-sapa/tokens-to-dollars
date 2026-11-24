@@ -35,13 +35,15 @@ import threading
 # tools whose JSON lands in a file not on stdout: {flag, args, skip} —
 # when the user set no flag in skip we write flag <tmpfile> + args and
 # parse the file into records after the run, install = hint printed when
-# the binary is missing.
+# the binary is missing, ident = marker the resolved binary's
+# -version/-h output must carry (PATH name-collision guard).
 TOOLS = {
     "subfinder": {"json": "-json", "rate": "-rl",
                   "tflags": {"-d": "host", "-domain": "host", "-dL": "file"},
                   "install": "go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"},
     "httpx": {"json": "-json", "rate": "-rl",
               "tflags": {"-u": "host", "-target": "host", "-l": "file", "-list": "file"},
+              "ident": "projectdiscovery",
               "install": "go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest"},
     "nuclei": {"json": "-jsonl", "rate": "-rl",
                "tflags": {"-u": "host", "-target": "host", "-l": "file", "-list": "file",
@@ -645,6 +647,21 @@ def emit_outfile(tool, path, scrub=None):
     return recs
 
 
+def ident_ok(exe, marker):
+    """PATH can bind a different binary under a wrapped tool's name — the
+    Python `httpx` client CLI shadows ProjectDiscovery httpx. The resolved
+    exe must name its upstream in -version/-h output or we refuse."""
+    for flag in ("-version", "-h"):
+        try:
+            p = subprocess.run([exe, flag], capture_output=True, text=True,
+                               timeout=15, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if marker in ((p.stdout or "") + (p.stderr or "")).lower():
+            return True
+    return False
+
+
 def main(argv):
     if "--" in argv:
         # the LAST -- is the tool/wrapper split: a -- inside tool args must
@@ -732,6 +749,11 @@ def main(argv):
     if exe is None:
         return die(127, "%r not found on PATH\nwrap: install: %s"
                    % (tdef.get("bin") or tool, tdef["install"]))
+    if tdef.get("ident") and not ident_ok(exe, tdef["ident"]):
+        return die(127, "%r resolves to %s, which does not identify as %r "
+                   "— PATH name collision (Python httpx CLI vs "
+                   "ProjectDiscovery httpx)\nwrap: install: %s"
+                   % (tool, exe, tdef["ident"], tdef["install"]))
 
     final = [exe]
     for f in tdef.get("force") or ():

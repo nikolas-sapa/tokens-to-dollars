@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import shutil
 from pathlib import Path
 
 FILES = {
@@ -34,6 +35,9 @@ FILES = {
 
 DIRS = ["memory/targets", "reports", "data", "knowledge"]
 
+RECON_TOOLS = ("subfinder", "nuclei", "katana", "ffuf", "dnsx", "gau",
+               "trufflehog")
+
 
 def main():
     ap = argparse.ArgumentParser(description="Create the gitignored local-state skeleton.")
@@ -57,6 +61,10 @@ def main():
         else:
             p.mkdir(parents=True, exist_ok=True)
             print("created  %s/" % rel)
+    missing = [t for t in RECON_TOOLS if shutil.which(t) is None]
+    if missing:
+        print("warning: recon tools not on PATH "
+              "(tools/wrap shells out to these): %s" % ", ".join(missing))
     return 0
 
 

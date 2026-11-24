@@ -162,7 +162,6 @@ def norm_diodb(platform, data, ts, source):
         r = base(platform, source, ts)
         r["name"] = (p.get("program_name") or "").strip() or None
         r["url"] = p.get("policy_url")
-        r["handle"] = slug_from(r["url"])
         r["safe_harbor"] = sh_bool(p.get("safe_harbor"))
         r["testing_policy_url"] = r["url"]
         for k, src in DIODB_CONTACT.items():
@@ -293,7 +292,7 @@ def norm_community(platform, data, ts, source):
         plat = p.get("platform") or platform
         r = base(plat, source, ts)
         r["name"] = p["name"].strip()
-        r["handle"] = p.get("handle") or slug_from(p["url"])
+        r["handle"] = p.get("handle")
         r["url"] = p["url"]
         r["max_payout"] = payout(p.get("max_payout"),
                                  (p.get("max_payout") or {}).get("currency")
@@ -485,7 +484,8 @@ def main():
     ap = argparse.ArgumentParser(description="Ingest public bug-bounty scope feeds into a normalized program catalog.")
     ap.add_argument("--out-dir", default="./out", help="output directory (default ./out)")
     ap.add_argument("--platforms", default=None,
-                    help="comma-separated platform filter, e.g. hackerone,immunefi")
+                    help="comma-separated platform or source-name filter, "
+                         "e.g. hackerone,diodb,arkadiyt,immunefi")
     ap.add_argument("--timeout", type=float, default=30, help="per-fetch timeout seconds (default 30)")
     ap.add_argument("--securitytxt", action="store_true",
                     help="probe /.well-known/security.txt per unique program "
@@ -530,16 +530,23 @@ def main():
     index = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
              "sources": []}
     for name, platform, url, kind in SOURCES:
-        if want and platform not in want:
+        if (want and platform not in want and name not in want
+                and kind not in want):
             continue
         entry = {"source": name, "url": url, "status": "ok", "n_programs": 0}
         try:
             data = fetch_json(url, args.timeout)
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
             recs = NORMALIZERS[kind](platform, data, ts, name)
+            keys = set()
             for r in recs:
                 k = dedupe_key(r)
+                keys.add(k)
                 programs[k] = merge(programs[k], r) if k in programs else r
+            if len(recs) - len(keys) > max(10, len(recs) // 20):
+                log.warning("%s: %d of %d records shared a dedupe key; "
+                            "merge key may be too loose",
+                            name, len(recs) - len(keys), len(recs))
             entry["n_programs"] = len(recs)
             entry["fetched_at"] = ts
             if kind == "diodb" and recs:
@@ -583,8 +590,9 @@ def main():
     if want:
         recs = [r for r in recs
                 if r["platform"] in want
-                or ("community" in want
-                    and "community" in r.get("source", "").split("+"))]
+                or any(s == w or s.startswith(w + "-")
+                       for w in want
+                       for s in (r.get("source") or "").split("+"))]
 
     if not want or "bbscope" in want:
         entry = {"source": "bbscope-updates", "url": BBSCOPE_UPDATES,

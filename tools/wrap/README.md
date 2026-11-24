@@ -26,6 +26,10 @@ flags below). Everything after `--` is a wrapper flag:
 | `--json` | wrap **every** stdout line as `{"tool": ..., "line": ...}` (non-JSON lines become the string value) |
 | `--allow-unmanifested` | run with no manifest after a loud stderr warning |
 
+Engagement scratch — fetched specs, page dumps, downloaded artifacts —
+goes to `memory/targets/<prog>/work/`, never `/tmp` (volatile,
+unverifiable later).
+
 ## Manifest gate (load-bearing)
 
 - No `--manifest` → loud stderr warning, and the run proceeds **only** with
@@ -185,7 +189,10 @@ format and non-JSON lines pass through raw.
 is intentionally not registered; `wrap.py naabu` is an unknown tool.
 
 Missing binaries soft-skip the existing way: exit 127 plus an install hint,
-never a hard crash.
+never a hard crash. `httpx` gets an identity probe on top: `httpx` on PATH
+can be the Python httpx client CLI, not ProjectDiscovery's, so the resolved
+binary must name `projectdiscovery` in `-version`/`-h` output or wrap
+refuses (exit 127, message names the collision).
 
 ## Output shape
 
