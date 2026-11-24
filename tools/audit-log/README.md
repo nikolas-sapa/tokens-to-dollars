@@ -7,7 +7,7 @@ so a tampered or dropped record fails verification instead of passing silently.
 Python 3.9+, stdlib only.
 
 ```bash
-# append an entry (kinds: intent|fact|finding|dispatch|settle)
+# append an entry (kinds: intent|fact|finding|dispatch|settle|decision)
 python3 tools/audit-log/audit_log.py append audit.jsonl \
     --kind intent --data '{"program":"acme","worker":"PB-3","est_usd":0.42}'
 

@@ -52,11 +52,19 @@ python3 reserve.py status                       # cap / settled / reserved JSON
 
 Worst case = (`est-in`×price-in + `max-out`×price-out) × 1.1, floored to
 micro-dollars. `reserve` exits 1 with `{"ok": false, "reason":
-"insufficient"}` when settled + reserved + worst-case would exceed the
-cap; the check-and-hold runs in one `BEGIN IMMEDIATE` section. Holds
-default to a 1800s TTL (`--ttl`) so `sweep` frees budget leaked by
-crashed workers; `settle` of an intent with no reservation still records
-actuals but then requires `--price-in`/`--price-out`.
+"insufficient"}` when settled + reserved + wrap-up tranche + worst-case
+would exceed the cap; the check-and-hold runs in one `BEGIN IMMEDIATE`
+section. Holds default to a 1800s TTL (`--ttl`) so `sweep` frees budget
+leaked by crashed workers; `settle` of an intent with no reservation
+still records actuals but then requires `--price-in`/`--price-out`.
+
+Budgets are hierarchical: each hold pins an extra `--reserve-pct`
+(default 15%) as `wrap_micro` — a wrap-up tranche held back for the
+settlement/report phase so worker intents can never consume the funds an
+engagement needs to close out. `settle` never touches it (its
+`wrap_held_micro` is reported, not released); only `sweep` frees it —
+run `sweep` at wrap-up phase start to release the accumulated tranche
+(`freed_wrap_micro` in the sweep output) for verifier/reporter spend.
 
 ## Predicted EV (planning-side, not stored)
 

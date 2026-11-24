@@ -1,0 +1,131 @@
+name: Program submission
+description: Submit a bug bounty or VDP program the scope feeds miss.
+title: "[program] "
+labels: ["program-submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For programs the feeds don't cover — mostly independent or self-hosted
+        scopes. Check coverage first: run `tools/ingest-scope` and grep
+        `programs.tsv` before filing; arkadiyt/diodb already catalog most
+        listed programs. Format spec and quality bar: `docs/submitting-programs.md`.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Matches the ingest record's `platform` enum.
+      options:
+        - hackerone
+        - bugcrowd
+        - intigriti
+        - yeswehack
+        - hackenproof
+        - immunefi
+        - independent
+    validations:
+      required: true
+  - type: input
+    id: handle
+    attributes:
+      label: Handle
+      description: Platform handle or slug — the record's `handle` field. For `independent`, the org slug.
+      placeholder: verisk_vdp
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Program name
+      description: Display name — the record's `name` field.
+      placeholder: Verisk VDP
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Program URL
+      description: The public program/policy page. Becomes `url` and `testing_policy_url` — must resolve.
+      placeholder: https://hackerone.com/verisk_vdp
+    validations:
+      required: true
+  - type: input
+    id: max_payout
+    attributes:
+      label: Max payout
+      description: Amount + ISO currency (e.g. `30000 USD`), only if the policy or platform states it. Leave empty for VDP/recognition-only — `max_payout` is null when unknown, never guessed.
+      placeholder: 30000 USD
+    validations:
+      required: false
+  - type: dropdown
+    id: safe_harbor
+    attributes:
+      label: Safe harbor
+      description: Does the policy commit to safe-harbor terms?
+      options:
+        - "yes — policy commits to safe harbor"
+        - "no — explicit none"
+        - "unsure / not stated"
+    validations:
+      required: true
+  - type: textarea
+    id: in_scope
+    attributes:
+      label: In scope
+      description: "One target per line: `<target> <type>` (e.g. `*.example.com WILDCARD`, `api.example.com DOMAIN`, `com.example.app ANDROID`). Copied from the policy page verbatim."
+      placeholder: "*.example.com WILDCARD"
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Same format as in-scope. Include policy exclusions verbatim (e.g. `self-XSS policy`).
+      render: shell
+    validations:
+      required: false
+  - type: dropdown
+    id: contact_type
+    attributes:
+      label: Contact type
+      description: How reports reach the program — maps to `contact{}`.
+      options:
+        - email
+        - "url — web submission form"
+        - security.txt
+        - pgp key
+    validations:
+      required: true
+  - type: input
+    id: contact_value
+    attributes:
+      label: Contact value
+      placeholder: security@example.com
+    validations:
+      required: true
+  - type: input
+    id: launch_date
+    attributes:
+      label: Launch date
+      description: YYYY-MM-DD if the policy page states it. Leave empty otherwise.
+      placeholder: "2020-01-01"
+    validations:
+      required: false
+  - type: textarea
+    id: verification
+    attributes:
+      label: Source / verification
+      description: Where a maintainer confirms this is a real, authorized program — official policy page, platform listing, diodb entry, or published security.txt. Unverifiable submissions are closed.
+      placeholder: https://example.com/security.txt
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This is a real, publicly authorized program with a live policy page.
+          required: true
+        - label: I checked a fresh `programs.tsv` — the existing feeds don't already cover it.
+          required: true

@@ -42,6 +42,20 @@ flags below). Everything after `--` is a wrapper flag:
 - `rps_cap` under `## rate_limits` is injected as the tool's rate flag
   unless you pass `--rate` or set the flag yourself.
 
+## Noise governor — pacing lives at egress, not in the worker
+
+Per-host request pacing is a property of this layer, not of worker
+discipline. Workers never self-throttle; every sanctioned request goes
+through the wrapper (or an equivalent egress proxy), which keys its
+pacing buckets on the *destination host* — not on which worker asked.
+Two workers hitting `api.acme.com` draw from the same bucket, so fleet
+width cannot multiply the effective rate at a target. Shell-spawned
+traffic is inside the convention by construction: the cap is injected
+into the child's own flags (`-rl`, `-rate`, `-d`) or enforced at the
+proxy, so a worker that shells out does not route around it. A tool
+with no rate flag warns `cap not enforced` — treat that warning as a
+failed control (proxy it or pick another tool), never as noise.
+
 ## Scope-check coverage
 
 Extracted as candidate targets (all checked against deny + authorized):

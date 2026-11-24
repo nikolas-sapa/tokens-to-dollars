@@ -1,0 +1,47 @@
+name: Feature request
+description: A capability the fleet is missing — skill, tool, or eval.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Techniques without authorized-use framing don't ship here, and a human
+        always submits. Proposals that remove either constraint get closed.
+  - type: textarea
+    id: gap
+    attributes:
+      label: Capability gap
+      description: What the fleet can't do today. Concrete — "no adapter for X feed", not "be better at recon".
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Research source
+      description: Paper, writeup, upstream feed, or public triager guidance backing the proposal. No provenance, no merge.
+      placeholder: https://
+    validations:
+      required: true
+  - type: textarea
+    id: mechanism
+    attributes:
+      label: Proposed mechanism
+      description: How it works — new playbook, ingest adapter, manifest field, eval fixture. Which existing gate it answers to.
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: Target file or skill
+      description: Where the change lands.
+      placeholder: skills/hunt/references/playbooks.md
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: Does not remove a gate and does not automate submission.
+          required: true

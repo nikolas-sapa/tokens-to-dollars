@@ -13,7 +13,14 @@ worker can argue; the action cannot.
 ```
 python3 guardian.py --manifest <roe-manifest.md|json>
                     (--action-file action.json | --stdin) [--json]
+                    [--log PATH] [--no-log]
 ```
+
+Every verdict is appended to a hash-chained audit log (kind `decision`,
+`tools/audit-log`; default `memory/audit.jsonl`, `--no-log` disables) —
+`sha256(prev_hash ‖ entry)` per entry, verifiable with
+`audit_log.py verify`. The log stores the action's `action_sha256`
+digest, not its body, so denied secret material never lands on disk.
 
 Action shapes:
 
@@ -46,6 +53,9 @@ line `<verdict> [<rule>] <reason>`, or the verdict object under `--json`.
 | `denylisted` | deny | host matches `hard_denylist` (subdomains inherit; `eligible_for_bounty: false` counts as denied) |
 | `out_of_scope` | deny | host not covered by `authorized_assets`; mutating methods note it explicitly |
 | `destructive_shell` | deny | `rm -rf`, `mkfs`, `dd of=`, `shred`, fork bombs, `curl\|sh` pipes — unless the manifest opts in via `allow_g3: true` |
+| `destructive_payload` | deny | a destructive shape found inside an embedded payload body (`-c` code, heredoc, decoded base64 blob) — the judge classifies payload content, not just the wrapping argv |
+| `opaque_payload` | escalate | a payload channel exists that cannot be decoded/classified: pipe into an interpreter, undecodable blob, empty/unparseable body — fail closed |
+| `payload_<class>` | per class | a Harmless Mode class hit inside an embedded payload body |
 | `ambiguous_scope` | escalate | host underivable (template URL, unreadable file arg, target-bearing argv with no extractable hosts) |
 | `forbidden_action` | escalate | action string matches a `## forbidden_actions` entry |
 | `mutation_rate` | escalate | POST/PUT/DELETE/PATCH on an in-scope host with no declared `rate`, or `rate` > `rps_cap` (unstated cap = 1) |

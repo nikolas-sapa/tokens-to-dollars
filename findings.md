@@ -286,3 +286,18 @@ Notable intel (findings only):
 - Evals: report-content injection (H1 #2372363 — invisible injection hijacked triage agent severity); scope-bait fixture (360's scraped-URL slip).
 - Orchestrator: GUI-conditional bugs route to human (ARTEMIS: all agents missed web-GUI RCE 80% of humans caught); dual-line taint (forward+reverse) in source-audit.
 - Meta: exploit_agent in the wild (GTIG Nov 2026) = patch-diff→exploit is now a race; speed post-disclosure matters. Attribution hygiene: only 2/2,544 CVEs use TOOL credit type — keep claims honest (tiers: direct credit > audited ledger > human-tandem > vendor claim).
+
+
+## Wave 13 — ARTEX fork-ecosystem + production-agent audit deltas
+
+**Fencing/leases**: ARTEX claim-lease = 15s heartbeat / 90s TTL / owner-token — stale workers cannot overwrite. Encode in blackboard claim protocol.
+**Noise governor**: target-noise pacing at proxy layer (per-host req budget); v0.7.0 fixed bypass by pacing Bash at recording proxy via userinfo markers — pacing must live in the egress path, not worker discipline.
+**Judge must not fail open**: ARTEX LLM judge evaluated isolated tool calls, never generated scripts → silent deletes shipped with zero denials. Guardian must inspect generated payloads/scripts, and fail-closed (already does).
+**Hash-chained decisions + L1/L2/L3 policy tiers** (br0ny4 fork): every allow/deny logged tamper-evident.
+**Hierarchical budgets + wrap-up reserve**: reserve tokens for final settlement/report, not just per-step caps.
+**Nonce envelope**: per-message nonce isolating target-derived data → injection boundary marker (EchoLeak-class).
+**Retest workflow**: 2-min manual retest preserves historical evidence + marks patched state — remediation retest loop.
+**Deterministic code owns scope/leases/receipts, not LLM** (PentestGPT 2026 rewrite — the convergent answer; also eBPF/nftables egress as true containment).
+**Defaults shipped unsafe**: ARTEX = unlimited timeouts, capture off, judge off, fail-open. Our default must be the hardened config.
+**Strix**: 90% sub-agent stop rule (graduated spend reserve). Shannon: no-exploit-no-report gate (have). Hydra effect: 444+ tracked copies after takedown — deletion ≠ containment.
+**Community-db gap**: no mature user-submitted bounty-program database (diodb/arkadiyt = curated feeds, not crowdsourced submissions). Buildable.

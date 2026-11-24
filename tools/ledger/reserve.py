@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS intents (
   created_at       TEXT NOT NULL,
   expires_at       TEXT NOT NULL,
   settled_at       TEXT,
-  ttl_seconds      INTEGER NOT NULL
+  ttl_seconds      INTEGER NOT NULL,
+  wrap_micro       INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -62,6 +63,10 @@ def connect(root):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(intents)")}
+    if "wrap_micro" not in cols:
+        conn.execute(
+            "ALTER TABLE intents ADD COLUMN wrap_micro INTEGER NOT NULL DEFAULT 0")
     return conn
 
 
@@ -74,14 +79,18 @@ def budget_state(conn):
     reserved = conn.execute(
         "SELECT COALESCE(SUM(worst_case_micro),0) AS s FROM intents WHERE state='reserved'"
     ).fetchone()["s"]
-    return cap, settled, reserved
+    wrap_held = conn.execute(
+        "SELECT COALESCE(SUM(wrap_micro),0) AS s FROM intents"
+    ).fetchone()["s"]
+    return cap, settled, reserved, wrap_held
 
 
 def sweep_expired(conn, now):
     """Release reservations past TTL (crashed workers). Caller holds the
-    transaction; returns the freed rows."""
+    transaction; returns the freed rows (their wrap-up tranche frees
+    with them)."""
     expired = conn.execute(
-        "SELECT intent_id, worst_case_micro FROM intents"
+        "SELECT intent_id, worst_case_micro, wrap_micro FROM intents"
         " WHERE state='reserved' AND expires_at <= ?", (now,)).fetchall()
     conn.execute(
         "DELETE FROM intents WHERE state='reserved' AND expires_at <= ?", (now,))
@@ -89,11 +98,18 @@ def sweep_expired(conn, now):
 
 
 def reserve(conn, intent_id, est_in_tokens, max_out_tokens,
-            price_in_micro, price_out_micro, ttl_seconds):
-    """Atomically check settled + reserved + worst_case <= cap and record
-    the hold, in one locked section. Returns dict(ok=...): ok=True holds
-    the budget, ok=False reason='insufficient' changes nothing. Retrying
-    a live intent_id is a no-op returning the existing hold."""
+            price_in_micro, price_out_micro, ttl_seconds, reserve_pct=15):
+    """Atomically check settled + reserved + wrap_held + worst_case +
+    its wrap-up tranche <= cap and record the hold, in one locked
+    section. Returns dict(ok=...): ok=True holds the budget, ok=False
+    reason='insufficient' changes nothing. Retrying a live intent_id is
+    a no-op returning the existing hold.
+
+    Hierarchical budget: each hold pins an extra reserve_pct% (default
+    15) as wrap_micro — the wrap-up tranche held back for the
+    settlement/report phase. Settle never consumes it; only `sweep`
+    releases it, so worker intents can never burn the funds the
+    engagement needs to close out."""
     now = datetime.now(timezone.utc)
     conn.execute("BEGIN IMMEDIATE")
     sweep_expired(conn, utcnow())
@@ -103,29 +119,35 @@ def reserve(conn, intent_id, est_in_tokens, max_out_tokens,
         conn.execute("COMMIT")
         return {"ok": True, "already_reserved": existing["state"] == "reserved",
                 "intent_id": intent_id, "state": existing["state"],
-                "worst_case_micro": existing["worst_case_micro"]}
-    cap, settled, reserved = budget_state(conn)
+                "worst_case_micro": existing["worst_case_micro"],
+                "wrap_micro": existing["wrap_micro"]}
+    cap, settled, reserved, wrap_held = budget_state(conn)
     if cap is None:
         conn.execute("ROLLBACK")
         sys.exit("error: no budget cap set — run `reserve.py cap <usd>` first")
     wc = worst_case_micro(est_in_tokens, max_out_tokens,
                           price_in_micro, price_out_micro)
-    if settled + reserved + wc > cap:
+    wrap = wc * int(Decimal(str(reserve_pct)) * 100) // 10000
+    if settled + reserved + wrap_held + wc + wrap > cap:
         conn.execute("ROLLBACK")
         return {"ok": False, "reason": "insufficient", "intent_id": intent_id,
-                "worst_case_micro": wc, "cap_micro": cap, "settled_micro": settled,
-                "reserved_micro": reserved, "headroom_micro": cap - settled - reserved}
+                "worst_case_micro": wc, "wrap_micro": wrap, "cap_micro": cap,
+                "settled_micro": settled, "reserved_micro": reserved,
+                "wrap_held_micro": wrap_held,
+                "headroom_micro": cap - settled - reserved - wrap_held}
     conn.execute(
         "INSERT INTO intents (intent_id,worst_case_micro,price_in_micro,price_out_micro,"
-        "state,created_at,expires_at,ttl_seconds) VALUES (?,?,?,?,'reserved',?,?,?)",
+        "state,created_at,expires_at,ttl_seconds,wrap_micro)"
+        " VALUES (?,?,?,?,'reserved',?,?,?,?)",
         (intent_id, wc, price_in_micro, price_out_micro,
          utcnow(), (now + timedelta(seconds=ttl_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-         ttl_seconds))
+         ttl_seconds, wrap))
     conn.execute("COMMIT")
     return {"ok": True, "intent_id": intent_id, "worst_case_micro": wc,
-            "cap_micro": cap, "settled_micro": settled,
+            "wrap_micro": wrap, "cap_micro": cap, "settled_micro": settled,
             "reserved_micro": reserved + wc,
-            "headroom_micro": cap - settled - reserved - wc,
+            "wrap_held_micro": wrap_held + wrap,
+            "headroom_micro": cap - settled - reserved - wrap_held - wc - wrap,
             "ttl_seconds": ttl_seconds}
 
 
@@ -134,7 +156,11 @@ def settle(conn, intent_id, actual_in, actual_out, price_in_micro=None, price_ou
     intent_id: a second settle returns the recorded figure without
     double-counting. Unknown intents (swept holds, crashed workers) still
     record actuals — real spend must land or the cap lies — but need
-    explicit prices since no reservation holds them."""
+    explicit prices since no reservation holds them.
+
+    Settle never consumes wrap_micro: the wrap-up tranche stays pinned
+    past settlement and is released only by `sweep` — that is what keeps
+    the settlement/report phase funded."""
     conn.execute("BEGIN IMMEDIATE")
     row = conn.execute(
         "SELECT * FROM intents WHERE intent_id=?", (intent_id,)).fetchone()
@@ -164,12 +190,14 @@ def settle(conn, intent_id, actual_in, actual_out, price_in_micro=None, price_ou
             (intent_id, actual, actual, p_in, p_out, ts, ts, ts))
     conn.execute("COMMIT")
     return {"ok": True, "intent_id": intent_id, "actual_micro": actual,
-            "released_micro": (row["worst_case_micro"] - actual) if row else 0}
+            "released_micro": (row["worst_case_micro"] - actual) if row else 0,
+            "wrap_held_micro": (row["wrap_micro"] or 0) if row else 0}
 
 
 def do_reserve(conn, a):
     out = reserve(conn, a.intent_id, a.est_in, a.max_out,
-                  to_micro(a.price_in), to_micro(a.price_out), a.ttl)
+                  to_micro(a.price_in), to_micro(a.price_out), a.ttl,
+                  a.reserve_pct)
     print(json.dumps(out))
     return 0 if out["ok"] else 1
 
@@ -182,12 +210,22 @@ def do_settle(conn, a):
 
 
 def do_sweep(conn, a):
+    """Sweep = wrap-up phase start: TTL-expired holds release AND every
+    pinned wrap-up tranche frees back to the pool, funding the
+    settlement/report work that follows."""
     conn.execute("BEGIN IMMEDIATE")
     expired = sweep_expired(conn, utcnow())
+    freed_wrap = conn.execute(
+        "SELECT COALESCE(SUM(wrap_micro),0) AS s FROM intents"
+        " WHERE wrap_micro > 0").fetchone()["s"]
+    conn.execute("UPDATE intents SET wrap_micro=0 WHERE wrap_micro>0")
     conn.execute("COMMIT")
     print(json.dumps({"ok": True,
                       "swept": [dict(e) for e in expired],
-                      "freed_micro": sum(e["worst_case_micro"] for e in expired)}))
+                      "freed_micro": sum(e["worst_case_micro"]
+                                         + (e["wrap_micro"] or 0)
+                                         for e in expired),
+                      "freed_wrap_micro": freed_wrap}))
     return 0
 
 
@@ -207,13 +245,15 @@ def do_cap(conn, a):
 
 
 def do_status(conn, a):
-    cap, settled, reserved = budget_state(conn)
+    cap, settled, reserved, wrap_held = budget_state(conn)
     holds = conn.execute(
-        "SELECT intent_id, worst_case_micro, created_at, expires_at FROM intents"
-        " WHERE state='reserved' ORDER BY created_at").fetchall()
+        "SELECT intent_id, worst_case_micro, wrap_micro, created_at, expires_at"
+        " FROM intents WHERE state='reserved' ORDER BY created_at").fetchall()
     print(json.dumps({
         "cap_micro": cap, "settled_micro": settled, "reserved_micro": reserved,
-        "headroom_micro": (cap - settled - reserved) if cap is not None else None,
+        "wrap_held_micro": wrap_held,
+        "headroom_micro": (cap - settled - reserved - wrap_held)
+        if cap is not None else None,
         "open_reservations": [dict(h) for h in holds]}))
     return 0
 
@@ -238,6 +278,10 @@ def main():
     p.add_argument("--price-out", required=True, help="USD per 1k output tokens")
     p.add_argument("--ttl", type=int, default=1800,
                    help="seconds before sweep releases the hold (default 1800)")
+    p.add_argument("--reserve-pct", type=float, default=15.0,
+                   help="percent of the hold pinned as wrap-up reserve "
+                        "for the settlement/report phase; settle never "
+                        "consumes it, sweep releases it (default 15)")
     p = sub.add_parser("settle", help="replace a hold with actual cost; "
                                       "idempotent per intent-id")
     p.add_argument("intent_id")
@@ -246,7 +290,9 @@ def main():
     p.add_argument("--price-in", default=None,
                    help="USD per 1k in — required only for intents with no reservation")
     p.add_argument("--price-out", default=None, help="USD per 1k out")
-    p = sub.add_parser("sweep", help="release TTL-expired holds from crashed workers")
+    p = sub.add_parser("sweep", help="release TTL-expired holds from crashed "
+                                     "workers and free all pinned wrap-up "
+                                     "reserves (run at wrap-up phase start)")
     p = sub.add_parser("status", help="cap / settled / reserved / open holds as JSON")
     args = ap.parse_args()
 

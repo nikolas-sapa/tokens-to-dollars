@@ -215,11 +215,116 @@ def norm_immunefi(platform, data, ts, source):
     return out
 
 
+COMMUNITY_FIELDS = {
+    "handle", "name", "url", "max_payout", "safe_harbor",
+    "in_scope", "out_of_scope", "contact", "launch_date",
+    "offers_bounty", "testing_policy_url", "platform",
+    "verification", "issue_ref",
+}
+COMMUNITY_PLATFORMS = {
+    "hackerone", "bugcrowd", "intigriti", "yeswehack", "hackenproof",
+    "immunefi", "sherlock", "cantina", "independent", "self-hosted",
+    "email", "other",
+}
+
+
+def _scope_rows(v):
+    rows = []
+    for t in v or []:
+        if isinstance(t, str):
+            rows.append({"target": t, "type": None,
+                         "eligible_for_bounty": None, "instruction": None})
+        elif isinstance(t, dict):
+            rows.append(srow(t))
+    return rows
+
+
+def validate_community_entry(p, idx=None):
+    """Return list of error strings for one community submission."""
+    tag = "entry[%s]" % (idx if idx is not None else "?")
+    errs = []
+    if not isinstance(p, dict):
+        return ["%s: not an object" % tag]
+    extra = set(p) - COMMUNITY_FIELDS
+    if extra:
+        errs.append("%s: unknown fields %s" % (tag, sorted(extra)))
+    name = (p.get("name") or "").strip() if isinstance(p.get("name"), str) else ""
+    if not name:
+        errs.append("%s: name required" % tag)
+    url = p.get("url")
+    if not (isinstance(url, str)
+            and url.startswith(("https://", "http://"))):
+        errs.append("%s: url must be http(s)" % tag)
+    plat = (p.get("platform") or "independent")
+    if plat not in COMMUNITY_PLATFORMS:
+        errs.append("%s: platform %r not in %s"
+                    % (tag, plat, sorted(COMMUNITY_PLATFORMS)))
+    if not (isinstance(p.get("in_scope"), list) and p["in_scope"]):
+        errs.append("%s: in_scope must be a non-empty list" % tag)
+    for k in ("in_scope", "out_of_scope"):
+        for t in p.get(k) or []:
+            if not (isinstance(t, str)
+                    or (isinstance(t, dict) and t.get("target"))):
+                errs.append("%s: bad %s entry %r" % (tag, k, t))
+    mp = p.get("max_payout")
+    if mp is not None and not (
+            isinstance(mp, (int, float))
+            or (isinstance(mp, dict) and mp.get("value") is not None)):
+        errs.append("%s: max_payout must be number or {value,currency}" % tag)
+    if sh_bool(p.get("safe_harbor")) is None and p.get("safe_harbor") is not None:
+        errs.append("%s: safe_harbor must be yes/no/partial/true/false" % tag)
+    c = p.get("contact")
+    if c is not None and not isinstance(c, dict):
+        errs.append("%s: contact must be an object" % tag)
+    if not isinstance(p.get("verification"), str) or not p["verification"].strip():
+        errs.append("%s: verification text required (source/proof it's real)" % tag)
+    return errs
+
+
+def norm_community(platform, data, ts, source):
+    progs = data.get("programs") if isinstance(data, dict) else data
+    out = []
+    for i, p in enumerate(progs or []):
+        errs = validate_community_entry(p, i)
+        if errs:
+            for e in errs:
+                log.warning("community: %s", e)
+            continue
+        plat = p.get("platform") or platform
+        r = base(plat, source, ts)
+        r["name"] = p["name"].strip()
+        r["handle"] = p.get("handle") or slug_from(p["url"])
+        r["url"] = p["url"]
+        r["max_payout"] = payout(p.get("max_payout"),
+                                 (p.get("max_payout") or {}).get("currency")
+                                 if isinstance(p.get("max_payout"), dict) else "USD")
+        r["safe_harbor"] = sh_bool(p.get("safe_harbor"))
+        r["in_scope"] = _scope_rows(p.get("in_scope"))
+        r["out_of_scope"] = _scope_rows(p.get("out_of_scope"))
+        r["testing_policy_url"] = p.get("testing_policy_url") or r["url"]
+        c = p.get("contact") or {}
+        for k in ("email", "url"):
+            if isinstance(c.get(k), str) and c[k].strip():
+                r["contact"][k] = c[k].strip()
+        if any(r["contact"].values()):
+            r["contact"]["source"] = "community"
+        r["launch_date"] = p.get("launch_date") or None
+        r["offers_bounty"] = sh_bool(p.get("offers_bounty"))
+        if r["offers_bounty"] is None:
+            r["offers_bounty"] = bool(r["max_payout"])
+        r["policy_url_status"] = "community-verified"
+        r["securitytxt"] = {"verification": p["verification"].strip(),
+                            "issue_ref": p.get("issue_ref")}
+        out.append(r)
+    return out
+
+
 NORMALIZERS = {
     "arkadiyt": norm_arkadiyt,
     "lissy93": norm_lissy93,
     "diodb": norm_diodb,
     "immunefi": norm_immunefi,
+    "community": norm_community,
 }
 
 
@@ -389,9 +494,34 @@ def main():
                     help="max distinct hosts to probe (default 100)")
     ap.add_argument("--securitytxt-timeout", type=float, default=10,
                     help="per-host fetch timeout seconds (default 10)")
+    ap.add_argument("--community-file", default=None,
+                    help="JSON file of community-submitted program entries "
+                         "(default: community-programs.json next to this script)")
+    ap.add_argument("--validate-community", metavar="FILE",
+                    help="validate a community-submission JSON file and exit "
+                         "(no fetching)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
+
+    if args.validate_community:
+        try:
+            data = json.loads(Path(args.validate_community).read_text())
+        except Exception as e:
+            print("invalid JSON: %s" % e)
+            return 1
+        progs = data.get("programs") if isinstance(data, dict) else data
+        if not isinstance(progs, list):
+            print("expected a JSON array (or {\"programs\": [...]})")
+            return 1
+        errs = []
+        for i, p in enumerate(progs):
+            errs.extend(validate_community_entry(p, i))
+        for e in errs:
+            print(e)
+        print("%d entries, %d errors" % (len(progs), len(errs)))
+        return 1 if errs else 0
+
     want = {p.strip().lower() for p in args.platforms.split(",")} if args.platforms else None
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -425,9 +555,36 @@ def main():
             log.warning("%s fetch failed: %s", name, e)
         index["sources"].append(entry)
 
+    community_file = Path(args.community_file) if args.community_file else (
+        Path(__file__).resolve().parent / "community-programs.json")
+    if community_file.exists():
+        entry = {"source": "community",
+                 "url": "file://%s" % community_file,
+                 "status": "ok", "n_programs": 0}
+        try:
+            data = json.loads(community_file.read_text())
+            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            crecs = norm_community("independent", data, ts, "community")
+            for r in crecs:
+                if want and r["platform"] not in want and "community" not in want:
+                    continue
+                k = dedupe_key(r)
+                programs[k] = merge(programs[k], r) if k in programs else r
+            entry["n_programs"] = len(crecs)
+            entry["fetched_at"] = ts
+            log.info("community: %d programs", len(crecs))
+        except Exception as e:
+            entry["status"] = "error"
+            entry["error"] = "%s: %s" % (type(e).__name__, e)
+            log.warning("community ingest failed: %s", e)
+        index["sources"].append(entry)
+
     recs = list(programs.values())
     if want:
-        recs = [r for r in recs if r["platform"] in want]
+        recs = [r for r in recs
+                if r["platform"] in want
+                or ("community" in want
+                    and "community" in r.get("source", "").split("+"))]
 
     if not want or "bbscope" in want:
         entry = {"source": "bbscope-updates", "url": BBSCOPE_UPDATES,

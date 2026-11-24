@@ -367,6 +367,14 @@ When a program reports a finding fixed, re-run the *original intent packet* — 
 
 The verdict updates the finding without deleting or editing the original evidence — the pre-fix capture stands as the record of what was demonstrated, and the retest lands as new dated files plus a `notes.md` line per the append-once rule in `../../evidence`. Re-run `dedupe-check` on every retest.
 
+### Manual retest — evidence preservation
+
+A manual retest appends history; it never rewrites it:
+
+- Re-run under the original intent packet's task/scope/invariant, capture fresh evidence into new dated files, and append the verdict to the original finding's record.
+- On `fixed`, mark the finding's state `patched`/`verified-fixed` — a state transition on the finding, never an edit to the original evidence record.
+- The pre-fix capture stays verbatim: it is the historical proof of what was demonstrated and when. Retest output lands beside it — nothing is overwritten, struck through, or deleted.
+
 ## Verification priority
 
 Prioritize potentially serious findings:

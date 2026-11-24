@@ -162,10 +162,10 @@ TOOLS = {
         "cmd": wrap_cmd,
         "stdin_arg": "stdin"},
     "audit_log_append": {
-        "description": "Append to the hash-chained audit log (kinds: intent|fact|finding|dispatch|settle).",
+        "description": "Append to the hash-chained audit log (kinds: intent|fact|finding|dispatch|settle|decision).",
         "inputSchema": {"type": "object", "required": ["log", "kind"], "properties": {
             "log": {"type": "string"},
-            "kind": {"type": "string", "enum": ["intent", "fact", "finding", "dispatch", "settle"]},
+            "kind": {"type": "string", "enum": ["intent", "fact", "finding", "dispatch", "settle", "decision"]},
             "data": {}, "sidecar": {"type": "string"}}},
         "cmd": audit_cmd},
 }

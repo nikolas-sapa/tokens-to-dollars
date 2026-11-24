@@ -21,6 +21,8 @@ python3 ingest_scope.py --timeout 10
 | `--securitytxt` | off | probe `/.well-known/security.txt` per unique program host; fills `contact{}` and `securitytxt` block, flags lapsed `Expires` |
 | `--securitytxt-limit` | `100` | max distinct hosts to probe (alphabetical, deterministic) |
 | `--securitytxt-timeout` | `10` | per-host fetch timeout in seconds |
+| `--community-file` | `community-programs.json` next to this script | JSON array (or `{"programs": [...]}`) of community-submitted entries; loaded whenever the file exists |
+| `--validate-community FILE` | off | schema-check a submission file and exit (no fetching); non-zero exit on any error |
 
 Individual source failures are tolerated: the source is marked `error` in
 `index.json`, a warning is logged to stderr, and the run continues.
@@ -34,6 +36,7 @@ Individual source failures are tolerated: the source is marked `error` in
 | disclose/diodb | `independent` | `program_name`/`policy_url`/`safe_harbor` plus report-channel fields (`contact_email`, `contact_url`, `securitytxt_url`, `pgp_key`, `preferred_languages` → `contact{}`; `disclosure_timeline_days`, `launch_date` → top level) and program-reality fields (`offers_bounty`, `offers_swag`, `hall_of_fame`, `public_disclosure`, `policy_url_status` → top level); its index entry carries `pay_vs_vdp` = fraction of diodb programs that pay vs VDP-only (~0.18) |
 | Immunefi public API | `immunefi` | `maxBounty` → `max_payout` USD; `assets[]` → `in_scope` |
 | bbscope /api/v1/updates | `bbscope` | post-ingest pass, not a program feed: writes `scope-updates.jsonl` trigger lines (`{"kind": "scope-change", type, platform, handle, program_url, target, scope_type, category, at}`) for change-detect watches, and stamps `fresh_scope_at` on catalog records whose `url` matches an update's `program_url` |
+| `community-programs.json` (committed) | per-entry `platform` field | community-submitted programs (`source: "community"`); each entry schema-validated via `validate_community_entry` — records that fail are warned + skipped. Required fields: `name`, `url`, non-empty `in_scope`, `verification`. Flow in `docs/submitting-programs.md` |
 
 The `--securitytxt` pass fetches `https://<program-host>/.well-known/security.txt`
 (RFC 9116) for each unique `testing_policy_url`/`url` host, fail-soft per

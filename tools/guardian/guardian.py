@@ -14,8 +14,19 @@ are denied or escalated even when the target is authorized. A manifest
 may allow-list entries per program via harmless_allow (e.g.
 "file_write_delete:/uploads/" on a file-upload scope).
 
+Shell actions are unpacked before adjudication: -c bodies, heredocs,
+base64 blobs, and piped scripts are classified on their CONTENT, not
+the wrapping argv — a fail-open judge that sees only argv lets scripted
+deletes sail through. An unclassifiable payload fails closed (escalate).
+
+Every verdict is appended to the hash-chained audit log
+(tools/audit-log, kind "decision") — tamper-evident record of what was
+adjudicated. The action's digest is stored, never its body, so denied
+secret material does not land in the durable log.
+
   python3 guardian.py --manifest <roe-manifest.md|json>
                       (--action-file action.json | --stdin) [--json]
+                      [--log PATH] [--no-log]
 
 action.json shapes:
   {"type": "http",  "method": "GET", "url": "https://h/x",
@@ -29,6 +40,9 @@ unreadable manifest, a malformed action, or an unknown type is a deny —
 and anything the adjudicator cannot prove safe is at best an escalate.
 """
 import argparse
+import base64
+import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -53,6 +67,26 @@ def _load_wrap():
 
 
 wrap = _load_wrap()
+
+# Decision log is delegated to audit_log.py — one hash chain, one
+# implementation. Loaded the same way; a missing log engine warns and
+# the adjudicator still runs (logging is not the enforcement path).
+_AUDIT_PATH = Path(__file__).resolve().parent.parent / "audit-log" / "audit_log.py"
+
+
+def _load_audit():
+    try:
+        spec = importlib.util.spec_from_file_location("t2d_audit", _AUDIT_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except (OSError, ImportError, AttributeError):
+        return None
+
+
+audit_log = _load_audit()
+_DEFAULT_LOG = str(Path(__file__).resolve().parents[2]
+                   / "memory" / "audit.jsonl")
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 MUTATING_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
@@ -161,6 +195,20 @@ REDIRECT_RE = re.compile(
     r"[>&]{1,2}>?\s*(/[^\s;&|\"'<>]+|~[/\w][^\s;&|\"'<>]*)")
 _CMD_PREFIX = {"sudo", "doas", "env", "nice", "nohup", "sh", "bash",
                "zsh", "dash", "xargs"}
+
+# ── Embedded payloads ─────────────────────────────────────────────────
+# A wrapper (bash -c, heredoc, base64, a pipe) can hide a whole script
+# from token-level argv checks; the bodies below are unpacked and
+# classified like top-level argv.
+INTERPRETERS = {"sh", "bash", "zsh", "dash", "fish", "ksh", "python",
+                "python2", "python3", "perl", "ruby", "php", "node",
+                "lua", "osascript", "pwsh", "powershell"}
+B64_BLOB_RE = re.compile(r"[A-Za-z0-9+/]{8,}={0,2}")
+# Destructive shapes inside a body string, where tokenization cannot be
+# trusted (os.system('rm -rf /') splits into no 'rm' token).
+BODY_DESTRUCTIVE_RE = re.compile(
+    r"\brm\b\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])[a-zA-Z]*"
+    r"|\bmkfs(?:\.[a-z0-9]+)?\b|\bshred\b|:\(\)\s*\{[^}]*:\s*\|\s*:")
 
 
 def verdict(v, rule, reason):
@@ -549,6 +597,69 @@ def harmless_shell(a, argv, mf):
     return _harmless_pick(checks, mf)
 
 
+def payload_bodies(argv):
+    """Script bodies an argv wrapper hides from token-level checks:
+    -c code strings, heredoc/multi-line tokens, base64 -d blobs. Returns
+    (bodies, opaque) — opaque flags a payload channel the judge cannot
+    decode (a pipe into an interpreter, an unreadable blob), which must
+    fail closed at escalate."""
+    bodies, opaque = [], False
+    for i, tok in enumerate(argv):
+        if "\n" in tok or "<<" in tok:
+            bodies.append(tok)                       # heredoc / inline script
+        if os.path.basename(tok) in INTERPRETERS:
+            for j in range(i + 1, len(argv)):
+                if argv[j] == "-c" and j + 1 < len(argv):
+                    bodies.append(argv[j + 1])
+                    break
+                if not argv[j].startswith("-"):      # script path, not code
+                    break
+        if tok == "|" and i + 1 < len(argv) \
+                and os.path.basename(argv[i + 1]) in INTERPRETERS:
+            opaque = True                            # generated/piped code
+        if os.path.basename(tok) == "base64" and any(
+                f in ("-d", "-D", "--decode") for f in argv[i + 1:]):
+            decoded = False
+            for cand in argv:
+                if not B64_BLOB_RE.fullmatch(cand):
+                    continue
+                try:
+                    bodies.append(base64.b64decode(cand, validate=True)
+                                  .decode("utf-8", "replace"))
+                    decoded = True
+                except (ValueError, TypeError):
+                    opaque = True
+            if not decoded:
+                opaque = True                        # decodes unseen stdin
+    return bodies, opaque
+
+
+def judge_payload(body, a, mf):
+    """Classify one embedded script body against the same high-risk
+    classes argv faces — the fix for the fail-open judge that saw only
+    argv. A wrapped `rm -rf` must verdict like a bare one."""
+    m = BODY_DESTRUCTIVE_RE.search(body)
+    if m and not mf["allow_g3"]:
+        return verdict("deny", "destructive_payload",
+                       "embedded payload has destructive shape %r"
+                       % m.group(0))
+    try:
+        sub = shlex.split(body)
+    except ValueError:
+        sub = body.split()
+    if not sub:
+        return verdict("escalate", "opaque_payload",
+                       "unparseable payload body cannot be classified")
+    killer = destructive_argv(sub)
+    if killer and not mf["allow_g3"]:
+        return verdict("deny", "destructive_payload",
+                       "embedded payload has destructive shape %r" % killer)
+    hv = harmless_shell(a, sub, mf)
+    if hv:
+        return verdict(hv["verdict"], "payload_" + hv["rule"], hv["reason"])
+    return None
+
+
 def judge_http(a, mf):
     method = str(a.get("method") or "").upper()
     url = a.get("url")
@@ -635,6 +746,16 @@ def judge_shell(a, mf):
         return verdict("deny", "destructive_shell",
                        "destructive shape %r; manifest does not allow G3"
                        % killer)
+    bodies, opaque = payload_bodies(argv)
+    hits = [v for v in (judge_payload(b, a, mf) for b in bodies) if v]
+    deny_hit = next((v for v in hits if v["verdict"] == "deny"), None)
+    if deny_hit:
+        return deny_hit
+    if hits or opaque:
+        return hits[0] if hits else verdict(
+            "escalate", "opaque_payload",
+            "payload channel into an interpreter cannot be decoded and "
+            "classified; fail closed")
     cands, targetish, unreadable = argv_hosts(argv)
     if unreadable:
         return verdict("escalate", "ambiguous_scope",
@@ -691,20 +812,26 @@ def main(argv):
                      help="read the action JSON from stdin")
     ap.add_argument("--json", action="store_true",
                     help="emit the verdict as a JSON object")
+    ap.add_argument("--log", default=_DEFAULT_LOG,
+                    help="hash-chained decision log path "
+                         "(default: %(default)s)")
+    ap.add_argument("--no-log", action="store_true",
+                    help="do not append the verdict to the decision log")
     a = ap.parse_args(argv)
 
     if wrap is None:
         v = verdict("deny", "scope_engine_unavailable",
                     "cannot load scope logic from %s" % _WRAP_PATH)
-        return emit(v, a.json)
+        return emit(v, a)
 
     try:
         mf = load_manifest(a.manifest)
     except (OSError, ValueError, KeyError) as e:
         v = verdict("deny", "manifest_unreadable",
                     "cannot load manifest %s: %s" % (a.manifest, e))
-        return emit(v, a.json)
+        return emit(v, a)
 
+    text = None
     try:
         text = sys.stdin.read() if a.stdin else open(
             a.action_file, encoding="utf-8").read()
@@ -712,16 +839,42 @@ def main(argv):
     except (OSError, ValueError) as e:
         v = verdict("deny", "malformed_action",
                     "cannot read/parse action: %s" % e)
-        return emit(v, a.json)
+        return emit(v, a, raw=text)
     if not isinstance(action, dict):
         v = verdict("deny", "malformed_action", "action must be an object")
-        return emit(v, a.json)
+        return emit(v, a, raw=text)
 
-    return emit(judge(action, mf), a.json)
+    return emit(judge(action, mf), a, action=action)
 
 
-def emit(v, as_json):
-    if as_json:
+def record_decision(log_path, action, v, raw=None):
+    """Append the verdict to the hash-chained audit log — tamper-evident
+    record of WHAT was adjudicated and how it was decided. Stores the
+    action's digest rather than its body, so denied secret material
+    never lands in the durable log. Best-effort: a log failure warns on
+    stderr, it never blocks the verdict."""
+    if audit_log is None or not log_path:
+        return
+    data = {"verdict": v["verdict"], "rule": v["rule"], "reason": v["reason"]}
+    if action is not None:
+        data["type"] = action.get("type")
+        data["action_sha256"] = "sha256:" + hashlib.sha256(
+            json.dumps(action, sort_keys=True,
+                       separators=(",", ":")).encode()).hexdigest()
+    elif raw is not None:
+        data["raw_sha256"] = "sha256:" + hashlib.sha256(
+            raw.encode()).hexdigest()
+    try:
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.redirect_stdout(sys.stderr):
+            audit_log.append(log_path, "decision", data, None)
+    except (Exception, SystemExit) as e:
+        print("guardian: audit-log append failed: %s" % e, file=sys.stderr)
+
+
+def emit(v, a, action=None, raw=None):
+    record_decision(None if a.no_log else a.log, action, v, raw)
+    if a.json:
         print(json.dumps(v))
     else:
         print("%s [%s] %s" % (v["verdict"], v["rule"], v["reason"]))

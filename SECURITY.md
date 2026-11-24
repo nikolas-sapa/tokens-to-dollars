@@ -16,6 +16,9 @@ vulnerabilities — see `skills/injection-defense`), CI workflows.
 Out of scope: third-party corpora ingested by the tools (report upstream),
 bugs in bounty targets themselves (report to the program, obviously).
 
+Submitting a program to the catalog is not a security report — use the
+"Program submission" issue template; see `docs/submitting-programs.md`.
+
 ## A note on skills as an attack surface
 
 Instruction files are executable content for agents. Treat any modification

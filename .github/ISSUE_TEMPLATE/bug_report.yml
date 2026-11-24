@@ -1,0 +1,101 @@
+name: Bug report
+description: Something in the tools, skills, or evals is broken.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bugs in bounty targets belong to the program, not to us — see `SECURITY.md`.
+        Requests to bypass scope, rate, or validation gates will be closed.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component affected
+      description: Which tool, skill, or harness broke.
+      options:
+        - "tool: ingest-scope"
+        - "tool: ingest-knowledge"
+        - "tool: bounty-radar"
+        - "tool: wrap"
+        - "tool: guardian"
+        - "tool: content-scan"
+        - "tool: fact-verify"
+        - "tool: evidence-store"
+        - "tool: audit-log"
+        - "tool: coverage"
+        - "tool: change-detect"
+        - "tool: patch-hunter"
+        - "tool: session-broker"
+        - "tool: memory-consolidate"
+        - "tool: engage-clean"
+        - "tool: ledger"
+        - "tool: knowledge-query"
+        - "tool: mcp-server"
+        - "tool: bootstrap"
+        - "skill: orchestrator"
+        - "skill: hunt"
+        - "skill: scope-parser"
+        - "skill: safety-gates"
+        - "skill: coverage-ledger"
+        - "skill: dedupe-check"
+        - "skill: evidence"
+        - "skill: reporter"
+        - "skill: injection-defense"
+        - "skill: token-ledger"
+        - "eval: bountybench"
+        - "eval: fprate"
+        - "eval: injection"
+        - "eval: verifier-canary"
+        - "install.sh"
+        - "docs"
+        - "other"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact command or steps. For skill bugs, the harness plus the prompt that triggered it.
+      placeholder: python3 tools/ingest-scope/ingest_scope.py --out-dir data/programs
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: What should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happened instead. Include exit codes.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, `python3 --version`, agent harness + model (skill bugs), wrapped-binary version (tools/wrap bugs).
+      placeholder: macOS 15, Python 3.12, Claude Code, subfinder v2.x
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: stderr output, `index.json` source errors, or trace warnings. Redact live-engagement data.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This is not a request to bypass a scope, rate, or validation gate.
+          required: true
+        - label: No private engagement data (program names, targets, keys) in this report.
+          required: true

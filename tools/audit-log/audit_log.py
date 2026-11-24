@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CHECKPOINT_EVERY = 25
-KINDS = ("intent", "fact", "finding", "dispatch", "settle")
+KINDS = ("intent", "fact", "finding", "dispatch", "settle", "decision")
 GENESIS = "sha256:" + hashlib.sha256(b"eval-audit-genesis-v1").hexdigest()
 
 

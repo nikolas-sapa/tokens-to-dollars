@@ -6,3 +6,6 @@ contact_links:
   - name: Security issue in this repo
     url: https://github.com/nikolas-sapa/tokens-to-dollars/blob/main/SECURITY.md
     about: Disclose privately via GitHub's security tab. Do not file a public issue.
+  - name: Submitting a program
+    url: https://github.com/nikolas-sapa/tokens-to-dollars/blob/main/docs/submitting-programs.md
+    about: Format spec and quality bar for program-catalog submissions. Use the Program submission template.

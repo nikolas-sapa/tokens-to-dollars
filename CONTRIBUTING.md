@@ -21,6 +21,13 @@ it describes the rules the repo enforces, and PRs are judged against it.
 - **Eval results** — runs against `evals/bountybench` or `evals/fprate`
   with the harness doc's methodology: model, token spend, findings, FP
   count. Receipts beat opinions.
+- **Eval fixtures** — new cases for `evals/injection/fixtures/` (one JSON
+  per fixture: `{id, channel, payload, expected_verdict}`) and
+  `evals/verifier-canary/fixtures/`. The bar is a fixture born from a real
+  bypass the fleet shipped or survived.
+- **Program entries** — bug bounty / VDP programs the feeds miss, via the
+  program-submission issue template. Format and quality bar:
+  `docs/submitting-programs.md`.
 - Bug fixes, docs fixes, wrapper adapters for additional well-maintained
   tools (`tools/wrap`), and test coverage anywhere.
 
@@ -56,6 +63,18 @@ The last command exits 127 on a machine without subfinder — that is the
 expected path (missing binary is reported cleanly). CI
 (`.github/workflows/smoke.yml`) runs the same checks.
 
+## Running the evals
+
+```bash
+python3 evals/injection/run.py              # ASR must stay 0; exits nonzero on a pass->fail flip
+python3 evals/verifier-canary/run.py        # every canary must die the way it was designed to
+python3 evals/fprate/stats.py check results.csv baseline.json   # after a harness run emits results.csv
+```
+
+`evals/bountybench` runs against an external Dockerized benchmark — see
+`evals/bountybench/RUN.md`. Re-run the harness your change touches; a green
+run from an old revision measures the old fleet, not this one.
+
 ## PR checklist
 
 - [ ] No private context: no program names, targets, findings, keys, or
@@ -64,6 +83,12 @@ expected path (missing binary is reported cleanly). CI
 - [ ] Cross-references between repo files are relative paths
   (`skills/scope-parser/SKILL.md`), never absolute URLs or machine paths.
 - [ ] `tools/` changes are Python 3.9+ stdlib-only and fail soft per-source.
+- [ ] Surgical edits only — no drive-by refactors, no reformatted neighbors.
+- [ ] Verification is stated, not implied: the PR fills in the `VERIFY_REAL:`
+  line with what was run against a real target and what would have failed if
+  the change didn't work. A green check that can't go red is not verification.
+- [ ] Touching `skills/hunt`, gates, `tools/content-scan`, `tools/fact-verify`,
+  or `evals/` re-ran the affected harness and pasted the output.
 - [ ] Markdown additions match the house style: compact, tables over prose,
   headers sentence-cased the same way as neighbors.
 - [ ] New techniques carry provenance and an authorized-testing framing line.

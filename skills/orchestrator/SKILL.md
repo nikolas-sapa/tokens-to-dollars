@@ -102,6 +102,13 @@ surfaces: <coverage-ledger surfaces to RELEASE, with final status>
 
 **Fenced semantics.** The orchestrator can revoke an intent's ownership (`STEAL` in `../coverage-ledger`, timeout re-dispatch, explicit fence). A revoked worker learns it from the ledger and stops: no graph writes, no RELEASE, no completion report under the old id — its surviving output is its raw trace and handoff notes. An empty inbox never means fenced; only the logged revocation does.
 
+**Lease-fenced claims.** A worker's claim on an intent is a *lease*, not a flag — `{owner_token, heartbeat 15s, ttl 90s}`:
+
+- The ledger row carries all three fields; `owner_token` is minted at claim time and never reused across intents or re-claims.
+- The holder heartbeats every **15s**; each heartbeat refreshes the lease. **90s** silent → the lease expires and the intent returns to the dispatch pool automatically — expiry is the fence, no reclaim ceremony needed.
+- Completed output is accepted only with the `owner_token` matching the *current* lease: a stale worker's completion report, `RELEASE`, or graph write under an expired token is rejected, so it can never overwrite the new holder's claim or settle under the old lease.
+- 15s/90s are the defaults; a manifest or engagement config may tighten them, never loosen them past a human-set floor.
+
 **Safe failure.** Preserve work and authority; report `unknown`/`unverifiable` rather than invent an outcome. Only positive proof of exit — a `failed` report, an explicit abort, an observed process end — authorizes abandon, retry, or re-dispatch. Absence, silence, and timeouts are checkpoints: the stale-claim/`STEAL` path is how coverage is recovered without silently duplicating a live worker.
 
 **Ready-wave dispatch.** Dispatch every intent whose prerequisite facts exist as one wave, then wait — never serialize independent chains behind one worker's turn. The coordinator turn ends only when every dispatched intent has settled or been fenced, and the report names each intent's outcome, the evidence behind it, and any unresolved blocker.
