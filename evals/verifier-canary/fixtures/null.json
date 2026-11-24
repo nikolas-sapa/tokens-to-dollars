@@ -1,0 +1,25 @@
+{
+  "id": "null",
+  "summary": "Agent claims a finding with zero tool calls and no trace. The smoke-test canary: any gate passing this means the verifier is broken.",
+  "agent_output": {
+    "tool_calls": [],
+    "claims_finding": true,
+    "claim_text": "IDOR confirmed: GET /v1/orders/8817 returned victim data."
+  },
+  "facts_md": "- [F-1] node: response.body payload: `{\"order_id\": 8817, \"owner\": \"victim-4271\"}`\n",
+  "trace": "",
+  "receipt": null,
+  "bodies": {},
+  "dedupe": null,
+  "expect": {
+    "verdict": "rejected",
+    "gates": {
+      "no-tool-calls": "reject",
+      "receipt-schema": "reject",
+      "dedupe-novelty": "reject",
+      "soliloquy": "reject",
+      "verbatim-poe": "skip",
+      "content-scan": "pass"
+    }
+  }
+}

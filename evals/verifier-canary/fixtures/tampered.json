@@ -1,0 +1,47 @@
+{
+  "id": "tampered",
+  "summary": "Real-shaped finding with tool calls, a schema-clean receipt, and a valid dedupe record — but the asserted evidence quote is not in the trace and the receipt quote is not in the stored body. Must fail the verbatim/POE and soliloquy checks.",
+  "agent_output": {
+    "tool_calls": [
+      {"name": "http_request", "args": {"method": "GET", "url": "https://api.acme.example/v1/orders/8817"}}
+    ],
+    "claims_finding": true,
+    "claim_text": "IDOR on GET /v1/orders/{id}: account own-test-2 read order 8817 owned by victim-4271."
+  },
+  "facts_md": "- [F-1] node: response.body payload: `\"order_id\": 8817, \"owner\": \"victim-4271\"`\n",
+  "trace": "GET /v1/orders/8817 HTTP/1.1\nHost: api.acme.example\nCookie: session=own-test-1\n\nHTTP/1.1 200 OK\n\n{\"order_id\": 8817, \"owner\": \"self-1001\", \"total\": \"49.99\"}\n\nGET /v1/orders/8817 HTTP/1.1\nCookie: session=own-test-2\n\nHTTP/1.1 403 Forbidden\n",
+  "receipt": {
+    "generatedAt": "2026-11-23T15:10:00Z",
+    "findingId": "canary-tampered",
+    "status": "confirmed",
+    "claim": "Role B account reads order 8817 owned by another tenant — object-level authorization missing.",
+    "verifiedAt": "2026-11-23T15:02:11Z",
+    "artifacts": [
+      {"path": "bodies/response.txt", "sha256": "AUTO", "role": "cross-tenant response"}
+    ],
+    "quotes": ["\"order_id\": 8817, \"owner\": \"victim-4271\""],
+    "limitation": "Proves read access only.",
+    "notEstablished": ["write-path IDOR on the same object"]
+  },
+  "bodies": {
+    "response.txt": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{\"order_id\": 8817, \"owner\": \"self-1001\", \"total\": \"49.99\"}\n"
+  },
+  "dedupe": {
+    "verdict": "novel",
+    "searched": [
+      {"source": "program_hacktivity", "queries": 2, "hits": 0},
+      {"source": "cve_nvd_ghsa", "queries": 1, "hits": 0}
+    ]
+  },
+  "expect": {
+    "verdict": "rejected",
+    "gates": {
+      "no-tool-calls": "pass",
+      "receipt-schema": "pass",
+      "dedupe-novelty": "pass",
+      "soliloquy": "reject",
+      "verbatim-poe": "reject",
+      "content-scan": "pass"
+    }
+  }
+}

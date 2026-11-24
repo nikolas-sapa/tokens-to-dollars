@@ -27,7 +27,7 @@ memory/
   lessons/
     platforms.md         # cross-program platform lessons (HackerOne, Immunefi, Intigriti, VRPs, ...)
     engagement-types.md  # what actually yields per engagement type
-    technique-yield.md   # yield ledger: playbook ids and check categories, ranked
+    technique-yield.md   # yield ledger: (technique, ctx) scored by decayed LCB90, ranked
   targets/<host>/        # one directory per primary target host from the scope manifest
     target-profile.md    # tech stack, auth provider, WAF/CDN, rate-limit behavior, scope quirks
     asset-graph.md       # source of truth: every discovered asset (deduped)
@@ -155,16 +155,18 @@ Traces are leads, not facts — anything a worker lifts from another worker's tr
 ## 8. The learning loop — what makes every engagement better than the last
 
 **Per-intent yield record** (append to the exploration graph when an intent closes):
-`- [Y-<n>] I-<n> → technique (<id>) → outcome: finding|fact-only|FP|blocked — intents spent: <k> — cost: <tokens per ../token-ledger>`
+`- [Y-<n>] I-<n> → technique (<id>) → outcome: finding|fact-only|FP|blocked — intents spent: <k> — cost: <tokens per ../token-ledger> — ctx: <target/engagement class>`
 
 **Engagement-end distill** (mandatory before closing; the orchestrator does it, then a human reviews):
 
 1. Archive the exploration graph to `graph-archive/<date>-<type>.md`; append the row to `engagements.md`.
 2. Update `targets/<host>/target-profile.md` — stack, auth provider, WAF/CDN behavior, observed rate limits, scope quirks.
 3. Update `targets/<host>/lessons.md` — what worked, what burned budget for nothing, target-specific FP patterns, and **unfinished chains**.
-4. Update `lessons/technique-yield.md` — recompute findings per intent spent per target/engagement class. The ledger drives future intent routing; prune techniques that never yield in a context.
+4. Update `lessons/technique-yield.md` — recompute the Beta-Bernoulli posterior per (technique, context class) from dated `[Y-n]` records: prior Beta(0.5, 9.5), each record decayed by 2^(-age/180d), score = posterior mean − 1.645·std (LCB90). The ledger drives future intent routing by that score, never raw hit-rate — a fresh 1/1 yields posterior mean ≈0.136 while a proven 6/20 yields ≈0.217, so one lucky shot never outranks demonstrated yield, and decay demotes patched or lapsed techniques on its own.
 5. Update `lessons/engagement-types.md` and `lessons/platforms.md` — type-level and platform-level lessons (what yields where; platform plumbing, triage behavior, quality bars).
 6. Distill confirmed findings into reusable attack patterns — a one-paragraph "when X surface, technique Y yielded Z" note in `lessons/patterns.md`. This is how the fleet gets more specific over time: each proven chain becomes a hypothesis template the planner can route on the next target. An entry confirmed on N>=2 independent engagements graduates to `skills/distilled/<pattern>.md` — a real SKILL.md (preconditions, probes, verification, FP notes) the fleet can load like a playbook; notable misses are recorded beside it as counter-patterns so the skill knows when not to fire.
+
+**Distilled-skill lifecycle.** A graduated `skills/distilled/<pattern>.md` MUST carry frontmatter `applicable_stacks`, `version_bounds`, `required_tools`, `provenance_traces`, `last_verified_at` — the planner-brief hard filter reads exactly those fields. Repeated verified failure on a matching stack triggers in-place revision: rewrite the SKILL.md and bump its version, never append a contradicting second copy. Falling utility moves the package from `active/` to `archived/` — kept for audit, never deleted. Level-3 probes get periodic lab replay so `last_verified_at` reflects a re-check, not just the graduation date.
 
 **Trust-tiered promotion.** Notes derived from fetched, untrusted content (pages, JS, policy text) may inform hints and traces but are never promoted into `lessons/`, `patterns.md`, or `technique-yield.md` without an anchored `[FD-n]` finding or `[H-n]` human note behind them — one poisoned pattern steers every future target (MINJA-style defense). Promotion requires provenance; repetition is not provenance.
 
@@ -172,10 +174,17 @@ Traces are leads, not facts — anything a worker lifts from another worker's tr
 
 **One-time engagements.** If the program is a single-shot hunt or the engagement rules require no retention, run `tools/engage-clean/clean.py --program <name> --keep-lessons` at close: it distills lessons (identifiers scrubbed), trashes `targets/<host>/`, report drafts, and graph-archive rows, masks the name in `engagements.md`/`ledger.md`, and leaves the audit chain intact (append-only by design).
 
+**Planner brief funnel — deterministic, four stages.** Every wake rebuilds the technique shortlist the same way:
+
+1. *Hard filter* — only techniques matching this target's stack, `version_bounds`, and available toolset, with VERIFIED status and untainted provenance (per the trust-tier rule); everything else is out before scoring.
+2. *Hybrid retrieval* — tag + BM25 + embedding candidates fused via RRF down to ~50-100; today this is tag/keyword match over `index.md` and lessons, embedding is an optional later swap.
+3. *Score* — rank by the decayed LCB90 score from the yield ledger; allocate ~75-80% of slots to the exploit top, ~20-25% to Thompson-sampled exploration draws so cold-start techniques get sampled, not starved.
+4. *Coverage-pack* — cap near-duplicate vuln classes per brief (no five SQLi lessons crowding out IDOR); top-k scales to the worker model tier (~5-8 for small, 15-25 for frontier); render as an index table — technique | yield [LCB, mean] | last-verified age | token cost — never a file dump.
+
 **Next engagement's planner brief is built from memory**, in this order:
 
 - **Prior unfinished chains first** — notes-not-reports and half-finished chains are the opening moves of the next hunt. Recorded verbatim in `lessons.md`, they re-enter the todolist before fresh exploration.
-- Highest-yield techniques for this target/engagement class, per the ledger.
+- Technique shortlist per the funnel above — LCB90-ranked exploit picks plus the Thompson-sampled exploration slice, for this target/engagement class.
 - Known FP patterns, so the verifier starts skeptical in the right places.
 - Only then: standard breadth — playbook coverage and gap analysis — for anything memory says is unexplored.
 

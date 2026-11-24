@@ -33,6 +33,31 @@ append-only markdown tables:
 `memory/` is gitignored local state; `tools/bootstrap.py` seeds the file
 with both table headers.
 
+## reserve.py — budget holds
+
+Pre-dispatch reserve/settle accounting for `skills/token-ledger`'s
+"Budget enforcement" rules. SQLite at `memory/budget.db` (gitignored);
+all amounts integer micro-dollars — no floats, float drift breaks caps.
+
+```sh
+python3 reserve.py cap 25.00                    # set (or show) the spend cap
+python3 reserve.py reserve int-0142 \
+    --est-in 182000 --max-out 16000 \
+    --price-in 0.015 --price-out 0.075          # USD per 1k tokens
+python3 reserve.py settle int-0142 \
+    --actual-in 182400 --actual-out 11900       # idempotent per intent-id
+python3 reserve.py sweep                        # release TTL-expired holds
+python3 reserve.py status                       # cap / settled / reserved JSON
+```
+
+Worst case = (`est-in`×price-in + `max-out`×price-out) × 1.1, floored to
+micro-dollars. `reserve` exits 1 with `{"ok": false, "reason":
+"insufficient"}` when settled + reserved + worst-case would exceed the
+cap; the check-and-hold runs in one `BEGIN IMMEDIATE` section. Holds
+default to a 1800s TTL (`--ttl`) so `sweep` frees budget leaked by
+crashed workers; `settle` of an intent with no reservation still records
+actuals but then requires `--price-in`/`--price-out`.
+
 ## Predicted EV (planning-side, not stored)
 
 The EV table reports realized EV (Σ paid / Σ est-$). Picking the next target

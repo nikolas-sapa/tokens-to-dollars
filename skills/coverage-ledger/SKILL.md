@@ -98,6 +98,17 @@ Column rules:
   stays claimed until the `reporter` draft is filed; put the
   `<finding-id>` in notes, nothing more.
 
+## Stall detection
+
+Step repetition is the #1 multi-agent failure mode in the MAST taxonomy
+(17%). Two identical actions from the same intent-id — same technique,
+same endpoint, same args — with no new facts between them are a stall,
+not a retry: the worker declares it (`stall:` in notes on RELEASE)
+rather than firing a third time. Audits detect loops mechanically: hash
+each claim payload (`technique+endpoint+args`) and flag consecutive
+duplicates from one holder. A stalled claim that keeps heartbeating is
+still a stall — heartbeats prove liveness, never progress.
+
 ## Handoff notes
 
 Unfinished chains are recorded verbatim — they are the most valuable

@@ -173,6 +173,30 @@ valid reports (~50% fewer criticals). Deprioritize programs that recently
 cut bounties; prefer rising tables — feed reward-table velocity from
 bounty-radar when detectable.
 
+## Budget enforcement
+
+- **Early-stop defaults per intent.** Every hypothesis carries explicit
+  bounds — ~40 tool calls / ~$0.30 / ~300s — set in the intent packet by
+  the planner, never inherited as vibes. MAPTA data: failed runs burn
+  3.4–5.8× the success-path cost, so an unbounded failure is the worst
+  spend in the fleet. Breach of any bound → stop-loss verdict, intent
+  killed, `blocked` row logged naming the bound that fired.
+- **Reserve before dispatch, settle on actuals.** The budget MUST be
+  reserved up front at worst case — `est_in + max_completion_tokens`
+  priced at +10% buffer (`tools/ledger/reserve.py`) — and settled against
+  real usage at close; the hold releases only via `settle` or the TTL
+  `sweep` (crashed workers). `max_completion_tokens` is mandatory on
+  every provider call: without it the worst case is uncomputable and
+  the intent must not run.
+- **Stake-forfeiture gate.** Staked submissions (Sherlock USDC, Immunefi
+  fees, YWH credits) proceed only when expected precision p > S/(B+S) —
+  a $250 stake on a $5k bounty needs p > 4.8%, on $10k needs p > 2.4%.
+  Pair with the ≥20% platform ratio floors (Sherlock Issues Ratio); the
+  fee forfeits on an invalid report AND on an AI-slop rejection alike.
+- **Read the manifest first.** `enforcement.submission_cost` sets S
+  before any staked submit; when the field is absent the stake is zero —
+  gate on the stated field, never on a guess.
+
 ## Rules
 
 - **The orchestrator writes rows at intent close — workers never write their

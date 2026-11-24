@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import math
 import re
 import sys
 from collections import defaultdict
@@ -11,12 +12,17 @@ DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 NODE_RE = re.compile(r"\[([A-Z]{1,4}-\d+)\]")
 Y_RE = re.compile(r"\[Y-\d+\].*?→\s*(?:technique\s*)?\(?([A-Za-z0-9_.\-]+)\)?\s*→\s*outcome:\s*([A-Za-z\-]+)")
 SPENT_RE = re.compile(r"intents spent:\s*(\d+)")
-YIELD_HEAD = """# lessons/technique-yield - yield ledger: playbook ids and check categories, ranked
+CTX_RE = re.compile(r"\bctx:\s*([A-Za-z0-9_.\-]+)")
+PRIOR_ALPHA, PRIOR_BETA = 0.5, 9.5
+HALF_LIFE_DAYS = 180.0
+LCB90_Z = 1.645
+YIELD_HEAD = """# lessons/technique-yield - yield ledger: (technique, ctx) scored by decayed Beta-Bernoulli posterior
 # Regenerated deterministically by tools/memory-consolidate/consolidate.py from [Y-n] records.
+# LCB90 = posterior mean - 1.645*std, prior Beta(0.5, 9.5), decay half-life 180d. Sorted by LCB90.
 # Anything under a `## manual notes` heading below survives regeneration.
 
-| technique | records | finding | fact-only | FP | blocked | intents spent |
-|---|---|---|---|---|---|---|
+| technique | ctx | LCB90 | mean | records | finding | fact-only | FP | blocked | intents spent |
+|---|---|---|---|---|---|---|---|---|---|
 """
 OUTCOMES = ("finding", "fact-only", "FP", "blocked")
 
@@ -136,32 +142,58 @@ def contradictions(files):
             for k, v in sorted(claims.items()) if v["live"] and v["struck"]]
 
 
-def yield_table(files):
-    agg = defaultdict(lambda: {"records": 0, "spent": 0})
+def yield_table(files, today):
+    """Aggregate [Y-n] records per (technique, ctx): outcome counts, intents
+    spent, and decay-weighted hits/trials. A blocked intent never ran the
+    technique, so it counts toward cost but not as a posterior trial."""
+    agg = {}
     for p in files:
         for ln in p.read_text().splitlines():
             m = Y_RE.search(ln)
             if not m:
                 continue
-            rec = agg[m.group(1)]
+            cm = CTX_RE.search(ln)
+            key = (m.group(1), cm.group(1) if cm else "general")
+            rec = agg.setdefault(key, {"records": 0, "spent": 0, "h": 0.0, "m": 0.0})
             rec["records"] += 1
-            rec[m.group(2)] = rec.get(m.group(2), 0) + 1
+            outcome = m.group(2)
+            rec[outcome] = rec.get(outcome, 0) + 1
             sm = SPENT_RE.search(ln)
             if sm:
                 rec["spent"] += int(sm.group(1))
-    return dict(agg)
+            if outcome == "blocked":
+                continue
+            d = line_date(ln)
+            age = max((today - date.fromisoformat(d)).days, 0) if d else 0
+            w = 2 ** (-age / HALF_LIFE_DAYS)
+            rec["h" if outcome == "finding" else "m"] += w
+    return agg
 
 
-def render_yield(agg, old_text=None):
+def score_rows(agg):
+    """Beta posterior over decayed counts; score = mean - 1.645*std (LCB90)."""
+    rows = []
+    for (tech, ctx), a in agg.items():
+        alpha, beta = PRIOR_ALPHA + a["h"], PRIOR_BETA + a["m"]
+        mean = alpha / (alpha + beta)
+        std = math.sqrt(alpha * beta / ((alpha + beta) ** 2 * (alpha + beta + 1)))
+        row = dict(a)
+        row.update({"technique": tech, "ctx": ctx,
+                    "mean": mean, "LCB90": mean - LCB90_Z * std})
+        rows.append(row)
+    rows.sort(key=lambda r: (-r["LCB90"], r["technique"], r["ctx"]))
+    return rows
+
+
+def render_yield(rows, old_text=None):
     out = [YIELD_HEAD.rstrip("\n")]
-    order = sorted(agg, key=lambda t: (-agg[t].get("finding", 0), -agg[t]["records"], t))
-    for t in order:
-        a = agg[t]
-        out.append("| %s | %d | %d | %d | %d | %d | %d |"
-                   % (t, a["records"], a.get("finding", 0), a.get("fact-only", 0),
-                      a.get("FP", 0), a.get("blocked", 0), a["spent"]))
-    if not order:
-        out.append("| — | 0 | 0 | 0 | 0 | 0 | 0 |")
+    for r in rows:
+        out.append("| %s | %s | %.3f | %.3f | %d | %d | %d | %d | %d | %d |"
+                   % (r["technique"], r["ctx"], r["LCB90"], r["mean"], r["records"],
+                      r.get("finding", 0), r.get("fact-only", 0), r.get("FP", 0),
+                      r.get("blocked", 0), r["spent"]))
+    if not rows:
+        out.append("| — | - | - | - | 0 | 0 | 0 | 0 | 0 | 0 |")
     if old_text:
         lines = old_text.splitlines()
         for i, ln in enumerate(lines):
@@ -237,11 +269,14 @@ def main():
             report["merged"][str(p)] = struck
             report["writes"][str(p)] = write_if_changed(p, new_text, args.dry_run)
 
-    agg = yield_table(files)
+    agg = yield_table(files, date.today())
+    rows = score_rows(agg)
     ypath = mem / "lessons" / "technique-yield.md"
     old = ypath.read_text() if ypath.is_file() else None
-    report["writes"][str(ypath)] = write_if_changed(ypath, render_yield(agg, old), args.dry_run)
-    report["technique_yield"] = agg
+    report["writes"][str(ypath)] = write_if_changed(ypath, render_yield(rows, old), args.dry_run)
+    report["technique_yield"] = [
+        {k: round(v, 4) if isinstance(v, float) else v for k, v in r.items()}
+        for r in rows]
 
     report["contradictions"] = contradictions(files)
 

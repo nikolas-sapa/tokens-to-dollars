@@ -105,6 +105,27 @@ that they should not) → `victim` (who pays) → `loss` (quantified: records
 exposed, funds at risk, privilege gained). Assert only what your evidence
 demonstrates. "Could potentially" is a banned phrase.
 
+## Patch offer
+
+Remediation is the triage bottleneck — the Codename MDASH lesson: a
+report carrying a minimal, regression-tested patch gets merged far
+faster than one that only describes the bug (55 of 99 patched reports
+in the GitHub-MS pilot were accepted upstream). When the finding allows:
+
+- Under Remediation, append a minimal diff or precise fix guidance —
+  the smallest change that closes the hole, in the project's own style.
+- Include a regression test the program can run itself: the before/after
+  case, kept as small as the PoC.
+- Label the patch a suggestion, not verified against their production
+  tree — you tested the pattern, not their deploy.
+- Never auto-file PRs. The draft carries the patch; the human decides
+  what leaves the machine.
+
+Same economics after submission: retest requests and NMI replies carry
+response-time expectations, and fast human follow-up is tracked (Google
+VRP's 1.2x multiplier scores replies inside ~3 workdays). The checklist
+line is a promise to stay reachable, not the end of the work.
+
 ## Per-platform calibration
 
 | Platform | Severity model | Title convention | Required extras | Watch out for |

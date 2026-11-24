@@ -223,3 +223,26 @@ Report confirmed core design (deterministic validators, human-gated submit, tier
 **Report-writing:** raw HTTP+script pair (Intigriti), direct-upload only (3rd-party hosting = CoC violation), NMI speed matters (Google 1.2x needs <3-day precise replies), per-platform schemas encoded.
 
 **Caution data:** static CTF inflation 2.2-2.4x (memorization); failed runs burn 3.4-5.8x more tokens; XBOW #1 masked <$40K payouts; Kroda plain-Codex nearly matches scaffolded agents (moat is validation+policy+economics, not orchestration complexity).
+
+
+## Wave 10 — coordination/memory/eval/economics reports (Nov 23, 2026) deltas
+
+Confirmed (no build): dual-graph+pheromone blackboard, fenced claims, hash-chained audit ≈ Temporal event-history, guardian ≈ ScopeJudge, council-verify read-only (debate+tools amplifies attacks — MADBench 11/12), fact-verify ≈ NeuroSploit evidence-grounding, trust-tiered promotion ≈ 3-zone IFC.
+
+Key data encoded wave 10:
+- MAST taxonomy (1642 traces): step repetition 17%, reasoning-action mismatch 13%, termination 12% -> step-repetition detector added (stall counter covered only no-new-facts).
+- MAPTA early-stop: ~40 calls / $0.30 / 300s per hypothesis; failed runs 3.4-5.8x cost -> per-intent defaults.
+- Beta-Bernoulli yield: prior Beta(.5,9.5), 180d half-life, LCB90 score, 75-80/20-25 exploit/explore -> replaces naive hit-rate (1/1=0.136 vs 6/20=0.217 posterior).
+- Stake math: staked submit requires p > S/(B+S); Sherlock 250 USDC/$5k -> 4.8%; >=20% Issues Ratio floors; Immunefi pay-to-submit $25-100 + credits (forfeit on invalid/slop).
+- Reserve-settle: worst-case = (est_in + max_out)*1.1, atomic check, integer micro-dollars, TTL sweep.
+- Verifier-canary: 4 adversarial outputs (null/random/injection/tampered) through real gates — null must fail (Berkeley RDI: conftest hack, curl trojan, out-of-sandbox grading).
+- Planner-brief funnel: hard-filter -> tag/BM25 RRF -> LCB90 score -> coverage-pack + model-tier top-k; skill lifecycle: version_bounds/last_verified_at/in-place revision/active->archived.
+- MDASH: patch-offer in reporter (55/99 merged, remediation = bottleneck).
+
+Notable intel (findings only):
+- Graphiti invalidation bugs (#1728: 41% retired/75% false; #1970 crowding) -> validates deterministic supersession over LLM contradiction judges.
+- Single strong agent ≈ fleet on tight tasks (Kroda, single-Bedrock 84.6%); fleet wins on breadth/parallel (Anthropic +90.2% research eval at 15x tokens) -> fleet only where parallel discovery pays.
+- 10/12 OSS pentest harnesses sandbox-escapable; 36.7% MCP servers SSRF-vulnerable; LiteLLM PyPI compromise -> pin digests.
+- Attribution blindness 53.5%/14.2% -> decided_by + lineage already covers.
+- Economics verdict: hybrid human+agent high-severity = only verified positive $/compute (XBOW Chrome 6.25x gross); fully-autonomous everything else = negative (Olas -19.2%, Circadian $0.62/day); audit contests collapsed ($14.20/sub actual).
+- curl lesson: removing cash removed slop, validity rebounded -> quality gates beat AI bans; GitHub VIP tier + 4-sub caps = signal moats.

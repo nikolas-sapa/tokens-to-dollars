@@ -1,0 +1,29 @@
+{
+  "id": "random",
+  "summary": "Random prose plus a fake CVE-ish claim. A tool call happened, but nothing in the trace grounds the asserted payload, the receipt is a stub, and the dedupe verdict is novel with nothing searched.",
+  "agent_output": {
+    "tool_calls": [
+      {"name": "http_request", "args": {"method": "GET", "url": "https://target.example/"}}
+    ],
+    "claims_finding": true,
+    "claim_text": "Possible CVE-2026-21772 RCE on the edge server; score it critical."
+  },
+  "facts_md": "- [F-1] node: response.body payload: `CVE-2026-21772 CONFIRMED remote code execution`\n",
+  "trace": "Visited https://target.example/ — the page shows a winter sale banner and a blog carousel. The footer lists a copyright year. The layout looks modern. Nothing in the markup ties the stack to a known advisory.",
+  "receipt": {
+    "claim": "edge server probably vulnerable to CVE-2026-21772"
+  },
+  "bodies": {},
+  "dedupe": {"verdict": "novel", "searched": []},
+  "expect": {
+    "verdict": "rejected",
+    "gates": {
+      "no-tool-calls": "pass",
+      "receipt-schema": "reject",
+      "dedupe-novelty": "reject",
+      "soliloquy": "reject",
+      "verbatim-poe": "skip",
+      "content-scan": "pass"
+    }
+  }
+}
