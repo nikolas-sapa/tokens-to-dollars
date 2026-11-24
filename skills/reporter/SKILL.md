@@ -304,7 +304,9 @@ delete the finding. It stays in notes as evidence for later chains.
    combination is completed. Until then it is half a finding — keep the
    half, finish the chain, report the whole.
 6. **In doubt, downgrade — do not drop.** Real-but-small impact files at
-   the honest small tier. The gate removes noise, not honest small finds.
+   the honest small tier. The gate removes noise, not honest small finds
+   — and small money is still money: a verified $50 bug ships as a $50
+   report, never discarded for tier size.
 7. **Rejection here never means the surface is finished.** A finding that
    fails the gate today is often the opening move of the one that passes
    tomorrow — keep hunting the same surface from the new angle.
@@ -446,6 +448,11 @@ Standing rules:
   debt means >60% of criticals sit unresolved months; on
   pay-on-resolution programs cash strands and unpatched bugs multiply
   dup collisions. Prefer pay-on-triage targets when ranking.
+- **All money is acceptable.** The gate rejects non-bugs, not small
+  bounties — a real $50 bug is reported honestly at $50 severity. Never
+  discard a verified finding because the payout tier is low; bundle it
+  or report it solo at its honest size. The filter is the harm gate
+  (real person/platform harmed), not the dollar figure.
 - **Fee stakes:** Sherlock $250 USDC/submission (refunded if valid;
   dup-refund unclear — check brief), Decred-style DCR deposits —
   surface before the human pays anything.
