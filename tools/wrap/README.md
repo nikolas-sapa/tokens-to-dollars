@@ -41,6 +41,49 @@ flags below). Everything after `--` is a wrapper flag:
   stdin — stdin is then replayed to the child unchanged.
 - `rps_cap` under `## rate_limits` is injected as the tool's rate flag
   unless you pass `--rate` or set the flag yourself.
+- `session: <program>` / `session_slot: a|b` under `## identity` opt the
+  manifest into stamped auth — see the next section.
+
+## Session injection — auth is stamped at egress, never held by workers
+
+```
+worker            wrap.py                 broker.py           target
+  |  argv + manifest|                       |                    |
+  |---------------->| inject --program X    |                    |
+  |                 | --tool httpx -------->| reads 0600 vault   |
+  |                 |<- ["-H","Auth: .."] --|                    |
+  |                 | spawns tool with the  |                    |
+  |                 | fragment in argv ---->|------------------->|
+  |  scrubbed out   | 401/403/302-login ->  |                    |
+  |<----------------| expire-check -------> | counts -> parks    |
+```
+
+When `## identity` carries `session: <program>`, wrap calls
+`broker.py inject --program X --tool <tool>` (plus `--account` from
+`session_slot`, default `a`) after all scope checks pass and appends the
+returned argv fragment to the child command — e.g.
+`-H 'Authorization: Bearer <token>'` for bearer/jwt,
+`-H 'Cookie: <token>'` for cookie auth.
+
+- **What workers never see:** the token. It exists only in the child
+  process's argv. Wrap scrubs it out of every line it re-emits (stdout
+  records, outfile parses, the child's stderr) — masked as `[session]`.
+  Worker context, wrap's own errors, and emitted JSONL stay clean.
+- **Fail closed:** any non-zero from the broker — expired, parked, no
+  material, or a tool that cannot carry auth — is exit 4 and the tool
+  never spawns. No run under a session manifest goes out unauthenticated.
+- **Header-capable tools:** httpx, nuclei, katana, ffuf, x8 (`-H`),
+  arjun (`--headers`). Everything else — gau/waybackurls (their requests
+  hit archive.org, where a target cookie would *leak*), DNS/local tools —
+  is refused by the broker; run them outside a session manifest.
+- **Dead-session feedback:** lines carrying `status`/`status_code` 401 or
+  403, or a 3xx `location` pointing at a login page, are fed to
+  `expire-check` once per run; the broker's circuit breaker parks the
+  program on persistent failure (default 3) and every later call refuses.
+- `session_slot: b` picks the vault's `second_account` — the IDOR pair:
+  same manifest, victim-B session stamped instead of victim-A.
+- Broker path: `tools/session-broker/broker.py`, override with
+  `T2D_BROKER` (vault root via `T2D_ROOT` as usual).
 
 ## Noise governor — pacing lives at egress, not in the worker
 
@@ -134,7 +177,8 @@ for downstream probing to populate, never guessed.
 |---|---|
 | tool's | pass-through of the wrapped binary |
 | 2 | usage error or unmanifested run without `--allow-unmanifested` |
-| 3 | scope (denylist / not authorized), unreadable manifest, or `--budget` exceeded |
+| 3 | scope (denylist / not authorized), unreadable manifest, bad `session_slot`, or `--budget` exceeded |
+| 4 | session-auth refusal — broker declined to stamp (expired / parked / no material / tool can't carry auth); tool never ran |
 | 127 | unknown tool name, or binary not on `PATH` (prints an install hint) |
 
 ## Examples
