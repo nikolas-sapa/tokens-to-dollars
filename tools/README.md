@@ -95,7 +95,13 @@ before a draft is written.
 `bootstrap.py` creates the local state skeleton — `memory/` lessons files,
 `engagements.md` index, `ledger.md` with its real table headers, plus
 `targets/`, `reports/`, `data/`, `knowledge/` directories. Idempotent; run
-it once after cloning so the orchestrator's append paths exist.
+it once after cloning so the orchestrator's append paths exist. It also
+acts as a doctor: missing recon tools get per-tool install lines (brew on
+macOS, `go install` fallback) plus a one-shot `install all:` command, and
+missing optional keys (`GITHUB_TOKEN`, `SOLODIT_API_KEY` under `env` in
+`~/.config/tokens-to-dollars/config.json` — presence checked, values never
+printed) get a `t2d setup` pointer. `--doctor` runs only the checks and
+creates nothing, so it is safe any time.
 Engagement scratch material (fetched specs, page dumps, downloaded
 artifacts) goes to `memory/targets/<program>/work/` — never `/tmp`.
 
