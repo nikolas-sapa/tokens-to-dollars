@@ -142,9 +142,9 @@ deny rules cover exfil-shaped headers to non-authorized hosts,
 secret-shaped material, denylist, out-of-scope, destructive shell;
 escalate covers ambiguous scope, manifest `forbidden_actions`, and
 mutating verbs over rate — the deny-porosity rule, nothing unprovable
-is silently allowed. Fail-closed everywhere. See
-`tools/guardian/README.md` for the integration point (pre-wrap or
-inside `mcp-server.py run_tool`).
+is silently allowed. Fail-closed everywhere. Wired into
+`mcp-server.py run_tool` so every `tools/call` is adjudicated before
+dispatch — see `tools/guardian/README.md` § MCP dispatch path.
 
 ## fact-verify
 
@@ -236,8 +236,8 @@ flags contradictions where the same normalized claim is both struck and live
 
 ## mcp-server
 
-`mcp-server.py` is a hand-rolled stdio JSON-RPC MCP server (stdlib only, ~150
-lines) that exposes every repo tool — ingest_scope, ingest_knowledge,
+`mcp-server.py` is a hand-rolled stdio JSON-RPC MCP server (stdlib only)
+that exposes every repo tool — ingest_scope, ingest_knowledge,
 bounty_radar, ledger, knowledge_query, content_scan, wrap, audit_log_append —
 as MCP `tools/call` targets by shelling out to the same CLI scripts. Point an
 MCP client at it with a `.mcp.json` like:
@@ -255,3 +255,14 @@ MCP client at it with a `.mcp.json` like:
 
 Speaks `initialize`, `tools/list`, `tools/call`, `ping`; tool failures return
 `isError` content, protocol failures use JSON-RPC codes.
+
+Every `tools/call` is adjudicated by `guardian/` before dispatch
+(`run_tool` → `adjudicate` → `subprocess.run`): `allow` executes
+normally, `escalate` returns a structured pending-approval result
+(`{"status":"escalated","hold":<action_sha256>,...}`) without executing,
+`deny` returns `{"status":"denied","rule","class",...}`. The manifest of
+the engaged program comes from the call's `manifest` arg, `T2D_MANIFEST`,
+or a single `memory/targets/<program>/roe-manifest.*`; a missing
+adjudicator or manifest fails closed to escalate, never allow. Verdicts
+land in the hash-chained decision log (`memory/audit.jsonl`). See
+`tools/guardian/README.md` § MCP dispatch path.
