@@ -435,3 +435,39 @@ Do not infer administrative compromise from an exposed route.
 Do not infer usable credentials from a key-shaped value.
 
 Do not infer historical intrusion from the presence of a vulnerability.
+
+---
+
+# DIFFERENTIAL AND COUNCIL ORACLES
+
+## Differential patched-copy oracle
+
+Strongest local proof shape (OpenHack eval convention): the PoC must
+**succeed against the original build AND fail against a minimally-patched
+copy**, while a **benign control still works in both**. "Breaking the app
+doesn't count as fixing" — the control proves the patch delta caused the
+differential, not collateral breakage. Generalizes every per-class oracle
+above: where a fix is available (retests, patch-hunter `variants`, staged
+environments), the paired differential is the verdict; a single-side
+success is one class lower.
+
+## Council abstain
+
+Cross-model councils (the dedupe `council verify` step) get a third
+verdict: **abstain**. On advocate/skeptic disagreement that neither run
+resolves with evidence, the verdict withholds confirmation — the finding
+stays `plausible`/`Supported but not fully validated`, never rounded up
+to `verified` by majority momentum, never rounded down to `refuted` by
+skeptic rhetoric. An unresolved candidate is recorded unresolved; the
+dissent is named. Abstain is a terminal state for the council, not a
+retry — escalation to a human (or more evidence) is the only exit.
+
+## Refute-the-lead step
+
+Every candidate carries an explicit refutation attempt before it reaches
+the verify gate: the confirmer tries to kill the lead first — find the
+check that defeats it (the filter, the authz call, the framework
+behavior, the missing precondition). A lead that survives its own
+refutation attempt earns the gate slot; a lead that fails is recorded
+`Refuted` with the defeating check named — ruled-out leads land in the
+ledger as coverage, not silence.

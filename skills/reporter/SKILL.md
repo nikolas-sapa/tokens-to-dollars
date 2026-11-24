@@ -281,6 +281,37 @@ cinder's BUG-REPORT.md). Its load-bearing conventions:
 The full skeleton — section order, heading grammar, the cleared-cleanly
 block — lives in `references/finding-format.md`.
 
+## Reportability gate — 7 questions
+
+Runs FIRST, before the quality gate and before any drafting. Ask and
+answer each; if the answer to all seven is no, do not report — but never
+delete the finding. It stays in notes as evidence for later chains.
+
+1. **Can a real person be harmed?** Stealing their account, session,
+   private data, acting as them, or deleting what is theirs — counts only
+   if you did it and captured the proof. "An attacker could" is not proof.
+2. **Can the platform itself be harmed or misused?** Reading data never
+   meant public, reaching internal systems/files, executing actions that
+   should need permission, or making it crash or stop serving.
+3. **If it is a leaked credential: was it meant to ship to every visitor?**
+   A credential is reportable only when it unlocks data or actions a
+   normal visitor cannot reach — show what it unlocked, not just that it
+   exists. Publishable keys (Stripe `pk_`, Supabase publishable, analytics
+   tokens, Google API client keys) are not secrets.
+4. **"This helps me learn the target" is a note, not a report.** Recon
+   yield stays in notes forever; it is never submitted alone.
+5. **Does the weakness only matter in combination?** Report only after the
+   combination is completed. Until then it is half a finding — keep the
+   half, finish the chain, report the whole.
+6. **In doubt, downgrade — do not drop.** Real-but-small impact files at
+   the honest small tier. The gate removes noise, not honest small finds.
+7. **Rejection here never means the surface is finished.** A finding that
+   fails the gate today is often the opening move of the one that passes
+   tomorrow — keep hunting the same surface from the new angle.
+
+This gate removes reports, never observations. A failed gate routes to
+notes (the memory layer in `../orchestrator`), not to the trash.
+
 ## Quality gate — 9 questions
 
 A draft may only be written after all nine pass. Any fail routes the
@@ -353,6 +384,38 @@ they calibrate `../../evals/fprate`.
 - One finding per report. Chained bugs file as one finding only when every
   link is needed for the impact; otherwise split.
 - Match program language (English default; French on FR YesWeHack scopes).
+
+## Submission-channel bars — per-program hard formats
+
+Some programs reject on format before content is read. Check the manifest
+for these before drafting the artifact:
+
+- **Google (VRP + Cloud VRP):** final reward multiplies ×0.8 / ×1.0 / ×1.2
+  on the seven-dimension rubric (see `../hunt/references/playbooks.md`
+  PART 2 — description, preconditions, impact, repro steps, target info,
+  repro output, responsiveness). "Exceptional" wants an **automated PoC
+  when possible**: must run in a Debian-based env (they sandbox-run it —
+  Cloud Shell), minimal deps (prefer Python `requests` over exotic libs —
+  they may ask you to rewrite if they can't verify dependency safety),
+  **no Selenium/browser automation** (they want the underlying API calls),
+  and it must accept **their own cookies/credentials** — never embed yours.
+  Short unlisted-YouTube video is a bonus. "AI slop" — non-technical or
+  factually wrong responses — is a scored-down responsiveness dimension.
+- **Plaintext-channel programs (e.g. Safe Foundation):** email channel
+  with **no attachments, no external links — auto-rejected**. The entire
+  report body + PoC must be inline plain text. Manifest `contact` block
+  carries the format flag.
+- **Version-pinned scope (Safe-style):** scope lists exact contract/module
+  versions — a bug already fixed in a newer released version is excluded.
+  Check the deployed/released version against the pinned list before
+  drafting; a mismatch kills the report.
+- **Fee-gated submissions (e.g. Lombard on Immunefi):** a non-refundable
+  submission fee is required for the report to be reviewed — flag to the
+  human before drafting; paying a platform fee is their decision, never
+  the tool's.
+- **KYC-before-payout (most Immunefi programs):** noted in the manifest;
+  surface it in the checklist line so the human knows the payout path
+  needs identity docs.
 
 ## Output contract
 

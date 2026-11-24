@@ -1,0 +1,11 @@
+rank	score	platform	name	max_payout	safe_harbor	n_scope	wild	fresh	dead	url
+1	112.45	immunefi	Metric	500000 USD	yes	1	0	2026-11-10		https://immunefi.com/bug-bounty/metric
+2	109.26	sherlock	Kamino	1000000 USD	yes	3	0	2026-10-16		https://audits.sherlock.xyz/bug-bounties/433
+3	98.73	immunefi	Lombard Finance	500000 USD	yes	5	0	2024-09-04		https://immunefi.com/bug-bounty/lombard-finance
+4	94.71	immunefi	Sky	10000000 USD	yes	1	0	2022-02-10		https://immunefi.com/bug-bounty/sky
+5	94.71	immunefi	Ethena	3000000 USD	yes	1	0	2024-04-04		https://immunefi.com/bug-bounty/ethena
+6	94.71	immunefi	Origin Protocol	1000000 USD	yes	1	0	2021-11-22		https://immunefi.com/bug-bounty/originprotocol
+7	89.96	immunefi	DeXe Protocol	500000 USD	yes	1	0	2024-01-23		https://immunefi.com/bug-bounty/dexeprotocol
+8	86.1	immunefi	Olympus	3333333 USD		1	0	2022-01-06		https://immunefi.com/bug-bounty/olympus
+9	85.21	immunefi	SSV Network	250000 USD	yes	1	0	2023-09-11		https://immunefi.com/bug-bounty/ssvnetwork
+10	71.75	self-hosted	Hastra	100000 USDC		1	0			https://bugbounty.hastra.io

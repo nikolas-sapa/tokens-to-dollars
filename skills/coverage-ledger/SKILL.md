@@ -134,6 +134,22 @@ learning loop for the next engagement. Keep them factual.
   hypotheses, and finding bodies never live in the ledger. One
   `finding-id` pointer in notes is the maximum.
 
+## Ruled-out and not-covered rows
+
+Coverage is not only hits. Two extra row classes close the gap between
+"looked at" and "cleared":
+
+- **`ruled-out` rows** — a lead that was checked and refuted, with the
+  defeating check named in notes ("frame codec: length checked before
+  alloc"). These prevent re-hunt churn — a surface with ruled-out rows
+  is covered, not silent. Aggregation-level reports render them as the
+  "checked, not a problem" section (`../reporter` finding-format's
+  cleared-cleanly block).
+- **`not-covered` rows** — blind spots stated honestly: unresolvable
+  deps, runtime-only config, infra not reachable, files skipped. An
+  `exhausted` surface with no not-covered disclosure is over-claimed —
+  the ledger records what was *not* looked at too.
+
 ## Deny rules are porous
 
 Pattern-matched deny rules are necessarily incomplete — ARTEX's own

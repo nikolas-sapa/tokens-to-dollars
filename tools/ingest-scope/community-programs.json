@@ -1,2 +1,207 @@
 [
+  {
+    "name": "Sky",
+    "handle": "sky",
+    "url": "https://immunefi.com/bug-bounty/sky",
+    "platform": "immunefi",
+    "max_payout": {"value": 10000000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2022-02-10",
+    "offers_bounty": true,
+    "testing_policy_url": "https://immunefi.com/bug-bounty/sky",
+    "in_scope": [
+      {"target": "https://immunefi.com/bug-bounty/sky/scope/", "type": "policy",
+       "instruction": "resolve live asset table before hunting; Primacy of Rules program"}
+    ],
+    "out_of_scope": [
+      {"target": "mainnet deployed code", "instruction": "test on local forks only"},
+      {"target": "pricing oracles and third-party contracts", "instruction": "excluded"},
+      {"target": "testnet and mock files", "instruction": "excluded"}
+    ],
+    "verification": "Operator import 2026-11-24 from community intel post; page fetched same date: max bounty $10,000,000, crit min $150k, live since 2022-02-10, last updated 2026-11-20. PoC required."
+  },
+  {
+    "name": "Olympus",
+    "handle": "olympus",
+    "url": "https://immunefi.com/bug-bounty/olympus",
+    "platform": "immunefi",
+    "max_payout": {"value": 3333333, "currency": "USD"},
+    "launch_date": "2022-01-06",
+    "offers_bounty": true,
+    "testing_policy_url": "https://immunefi.com/bug-bounty/olympus",
+    "in_scope": [
+      {"target": "https://immunefi.com/bug-bounty/olympus/scope/", "type": "policy",
+       "instruction": "custom program (OIP-38): Tier1 user funds $333,333 cap, Tier2 treasury $3,333,333 cap; KYC NOT required; Responsible Publication category 3 (approval required); paid in OHM"}
+    ],
+    "out_of_scope": [
+      {"target": "mainnet deployed code", "instruction": "prohibited — local forks only"},
+      {"target": "public testnet deployed code", "instruction": "prohibited — local forks only"},
+      {"target": "pricing oracles and third-party contracts", "instruction": "excluded"},
+      {"target": "high-traffic automated testing", "instruction": "prohibited"}
+    ],
+    "verification": "Operator import 2026-11-24; page fetched same date: max bounty $3,333,333 paid in OHM, PoC always required, KYC not required, prior audits listed and ineligible."
+  },
+  {
+    "name": "Ethena",
+    "handle": "ethena",
+    "url": "https://immunefi.com/bug-bounty/ethena",
+    "platform": "immunefi",
+    "max_payout": {"value": 3000000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2024-04-04",
+    "offers_bounty": true,
+    "testing_policy_url": "https://immunefi.com/bug-bounty/ethena",
+    "in_scope": [
+      {"target": "https://immunefi.com/bug-bounty/ethena/scope/", "type": "policy",
+       "instruction": "Primacy of Impact for SC C/H/M/L + Web Critical; crit = 10% funds at risk cap $3M, floor $100k; KYC required; pays USDC; arbitration enabled"}
+    ],
+    "out_of_scope": [
+      {"target": "testnet and mock files", "instruction": "excluded"},
+      {"target": "known issues listed on program page", "instruction": "ineligible"}
+    ],
+    "verification": "Operator import 2026-11-24; page fetched same date: max $3,000,000 (crit min $100k), vault program, KYC + arbitration, live since 2024-04-04, updated 2026-11-24."
+  },
+  {
+    "name": "Origin Protocol",
+    "handle": "originprotocol",
+    "url": "https://immunefi.com/bug-bounty/originprotocol",
+    "platform": "immunefi",
+    "max_payout": {"value": 1000000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2021-11-22",
+    "offers_bounty": true,
+    "testing_policy_url": "https://immunefi.com/bug-bounty/originprotocol",
+    "in_scope": [
+      {"target": "https://immunefi.com/bug-bounty/originprotocol/scope/", "type": "policy",
+       "instruction": "crit financial requires >=$50k user funds actually at risk on mainnet fork PoC at submission block; paid in OUSD; KYC; arbitration"}
+    ],
+    "out_of_scope": [
+      {"target": "treasury/protocol-owned funds alone", "instruction": "not 'user funds' unless insolvency or listed Critical impact"},
+      {"target": "audit-disclosed and documented behavior", "instruction": "ineligible"}
+    ],
+    "verification": "Operator import 2026-11-24; page fetched: max $1,000,000, crit min $50k (financial)/$10k, vault program, Safe Harbor tab present."
+  },
+  {
+    "name": "Kamino",
+    "handle": "kamino",
+    "url": "https://audits.sherlock.xyz/bug-bounties/433",
+    "platform": "sherlock",
+    "max_payout": {"value": 1000000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2026-10-16",
+    "offers_bounty": true,
+    "testing_policy_url": "https://docs.kamino.com/security/bug-bounty",
+    "in_scope": [
+      {"target": "app.kamino.finance", "type": "domain"},
+      {"target": "kamino.com", "type": "domain"},
+      {"target": "https://audits.sherlock.xyz/bug-bounties/433", "type": "policy",
+       "instruction": "Solana mainnet: KLend, KVault, Kamino Liquidity, KFarms, Scope oracle; PoC on local Solana validator; KYC before payment; SC theft 10% capped $1M, no guaranteed minimums; Primacy of Impact does NOT apply"}
+    ],
+    "out_of_scope": [
+      {"target": "test or unlisted markets and vaults", "instruction": "excluded"}
+    ],
+    "verification": "Operator import 2026-11-24; search-confirmed: Sherlock bounty 433, LIVE since 2026-10-16, max 1,000,000 USDC on Solana; docs.kamino.com/security/bug-bounty corroborates scope cards."
+  },
+  {
+    "name": "Lombard Finance",
+    "handle": "lombard-finance",
+    "url": "https://immunefi.com/bug-bounty/lombard-finance",
+    "platform": "immunefi",
+    "max_payout": {"value": 500000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2024-09-04",
+    "offers_bounty": true,
+    "testing_policy_url": "https://docs.lombard.finance/learn/security/bug-bounty",
+    "in_scope": [
+      {"target": "0x8236a87084f8B84306f72007F36F2618A5634494", "type": "contract",
+       "instruction": "LBTC Token mainnet"},
+      {"target": "0xed6D647E2F81E5262101aFf72c4A7bcDcfd780e0", "type": "contract",
+       "instruction": "Consortium Governance"},
+      {"target": "0x055E84e7FE8955E2781010B866f10Ef6E1E77e59", "type": "contract",
+       "instruction": "Proxy Upgrade Timelock"},
+      {"target": "lombard.finance", "type": "domain"},
+      {"target": "https://immunefi.com/bug-bounty/lombard-finance/scope/", "type": "policy",
+       "instruction": "52 assets incl. March-2026 additions (BasculeV1, BTC.b, AssetRouter, Mailbox, BridgeV2, StakedLBTCOracle) + mainnet.json-listed contracts; SUBMISSION FEE required (non-refundable, paid to Immunefi); KYC + arbitration; impacts whitelist: arbitrary system commands, subdomain takeover, direct theft of user funds, XSS via metadata, governance manipulation"}
+    ],
+    "out_of_scope": [
+      {"target": "mainnet or public testnet testing", "instruction": "prohibited — local forks only"},
+      {"target": "third-party contracts, pricing oracles, third-party websites", "instruction": "excluded"},
+      {"target": "public disclosure before fix", "instruction": "disqualifying"}
+    ],
+    "verification": "Operator import 2026-11-24; search-confirmed: Immunefi page live since 2024-09-04, updated 2026-10-15, max $500k crit min $50k, vault program; docs.lombard.finance corroborates contract table."
+  },
+  {
+    "name": "DeXe Protocol",
+    "handle": "dexeprotocol",
+    "url": "https://immunefi.com/bug-bounty/dexeprotocol",
+    "platform": "immunefi",
+    "max_payout": {"value": 500000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2024-01-23",
+    "offers_bounty": true,
+    "testing_policy_url": "https://immunefi.com/bug-bounty/dexeprotocol",
+    "in_scope": [
+      {"target": "https://immunefi.com/bug-bounty/dexeprotocol/scope/", "type": "policy",
+       "instruction": "crit min $10k cap $500k; crit+high paid in DEXE with 6-month linear vesting, medium in USDC; KYC required; Known Issue Assurance offered"}
+    ],
+    "out_of_scope": [
+      {"target": "testnet and mock files", "instruction": "excluded"},
+      {"target": "audit-disclosed vulnerabilities", "instruction": "ineligible (5 audit PDFs listed)"}
+    ],
+    "verification": "Operator import 2026-11-24; page fetched: max $500,000, vault program, KYC, updated 2026-11-24."
+  },
+  {
+    "name": "Metric",
+    "handle": "metric",
+    "url": "https://immunefi.com/bug-bounty/metric",
+    "platform": "immunefi",
+    "max_payout": {"value": 500000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2026-11-10",
+    "offers_bounty": true,
+    "testing_policy_url": "https://immunefi.com/bug-bounty/metric",
+    "in_scope": [
+      {"target": "https://immunefi.com/bug-bounty/metric/scope/", "type": "policy",
+       "instruction": "FRESH program (live 2026-11-10 alongside mainnet deploy): pool/factory/oracle/extension/router contracts; crit = 20% funds at risk cap $500k floor $50k; runnable PoC required; Primacy of Impact all tiers"}
+    ],
+    "out_of_scope": [
+      {"target": "malicious price provider implementations", "instruction": "out of scope (low-severity discretionary only)"},
+      {"target": "audit-reported issues (Zellic 2026-06, Sherlock 2026-10)", "instruction": "ineligible"}
+    ],
+    "verification": "Operator import 2026-11-24; page fetched: max $500,000, live since 2026-11-10, runnable-PoC required."
+  },
+  {
+    "name": "SSV Network",
+    "handle": "ssvnetwork",
+    "url": "https://immunefi.com/bug-bounty/ssvnetwork",
+    "platform": "immunefi",
+    "max_payout": {"value": 250000, "currency": "USD"},
+    "safe_harbor": "partial",
+    "launch_date": "2023-09-11",
+    "offers_bounty": true,
+    "testing_policy_url": "https://immunefi.com/bug-bounty/ssvnetwork",
+    "in_scope": [
+      {"target": "https://immunefi.com/bug-bounty/ssvnetwork/scope/", "type": "policy",
+       "instruction": "crit = 10% funds at risk cap $250k floor $50k; AGGREGATE POOL CAP 150,000 SSV tokens; paid in SSV; KYC required; Primacy of Impact SC all tiers"}
+    ],
+    "out_of_scope": [
+      {"target": "audit-reported unfixed issues", "instruction": "ineligible (audits listed on page)"},
+      {"target": "public disclosure without SSV DAO Grants Committee authorization", "instruction": "prohibited"}
+    ],
+    "verification": "Operator import 2026-11-24; page fetched: max $250,000, vault program ($197k available), KYC, updated 2026-11-24."
+  },
+  {
+    "name": "Hastra",
+    "handle": "hastra",
+    "url": "https://bugbounty.hastra.io",
+    "platform": "self-hosted",
+    "max_payout": {"value": 100000, "currency": "USDC"},
+    "offers_bounty": true,
+    "testing_policy_url": "https://bugbounty.hastra.io",
+    "in_scope": [
+      {"target": "https://bugbounty.hastra.io", "type": "policy",
+       "instruction": "self-hosted program (JS app); resolve scope + rules on page before hunting"}
+    ],
+    "verification": "Operator import 2026-11-24 from community intel post ($100,000 USDC pool); domain confirmed live (SPA). Scope/rules not yet fetched — resolve before any testing."
+  }
 ]

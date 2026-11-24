@@ -217,6 +217,20 @@ This is the compounding loop: every note not submitted, every FP ruled out, ever
   5. *Distill and persist* — yield records, lessons, ledger updates; memory writes survive the run
 - The memory files are the durable artifact — a run can die and the learning survives. A run that errors mid-engagement resumes from the graphs; never restart from zero when memory exists.
 
+## 9a. Deterministic routing discipline
+
+Field lessons from production agent hunters (OpenHack, Strix, provos/ironcurtain, Nov 2026):
+
+- **The router is not a model.** Phase transitions (recon → plan → dispatch → verify → distill) are decided by a finite state machine reading the engagement ledger, never by an LLM judging "what next". Each state emits verdicts from a closed set (`reanalyze | dispatch | verify | triage | escalate | conclude`) — the machine refuses undefined verdicts; there is no model-declared "looks fine".
+- **Visit caps force escalation, not soft finish.** Every loop state carries a visit cap; exceeding it routes to human escalation, never to a degraded "good enough" conclusion. "No exploitable vulnerability found" is a valid terminal outcome.
+- **States rehydrate from the journal, not the transcript.** Each phase boots a fresh context reading the append-only engagement journal — the orchestrator itself never reads raw source; it routes on artifacts.
+- **Delegation-only root.** The root agent never probes — "even a single quick test on a discovered endpoint is out of role". Root turns are limited to scope decomposition, spawn/monitor, coverage tracking, aggregation.
+- **Spawn matrix: vuln class × component.** Workers are dispatched per vulnerability-type × component cell (not per endpoint); each cell gets a capped-skill worker. Empty cells are coverage gaps, not skipped intents.
+- **Coverage gating before hypothesis counts.** For code-level targets, a test harness must demonstrably *reach* the suspect code (libFuzzer/AFL++-style coverage) before a hypothesis counts as tested — a PoC that never reached the code is "Not tested", not "Refuted".
+- **Shared-workspace collaboration.** Agents coordinate through shared artifacts (one proxy history, one workspace tree, shared mailbox) — not through prompts alone; captured traffic and findings are readable fleet-wide.
+- **Capability floor exists.** Report cost + capability: distilled/small models can fail the workflow entirely — when a worker tier can't run the discipline, downgrade the engagement scope, don't let it fake the loop (~10M tokens/Opus-run, ~$150, is the published frontier cost envelope; GLM-class ~27M tokens).
+- **Bench context for precision claims.** PentestBench v1 (Nov 2026): best published result ~43% F1 on 761 planted vulns — precision-vs-volume tradeoffs are quantified (36% recall/53% precision beats 43% recall/26% precision for report-quality pipelines; every +7% recall at −27% precision is a triage-cost increase). Our pipeline optimizes precision — the reportability gate exists for that.
+
 ## 10. Stop conditions and honesty
 
 - All `../safety-gates` stop conditions apply; any one firing halts dispatch globally until a human clears it.

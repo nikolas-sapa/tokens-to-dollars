@@ -657,3 +657,34 @@ Ask:
 Do not repeat tests without a meaningful new hypothesis.
 
 The second pass should reduce important coverage gaps, not simply increase request volume.
+
+---
+
+# 2026 TACTICS — PROBE / ORACLE / FP-TRAP
+
+Wave-14 additions from disclosed-writeup mining (Nov 2026). Full methods in `playbooks.md` PB-15/16/17; this is the checklist form.
+
+| Surface | Probe | Oracle (proof shape) | FP trap |
+|---|---|---|---|
+| Any server-side fetch | Point at own echo endpoint; read request headers | `x-envoy-peer-metadata*` (pod IP/name/namespace) or stack-identifying header + internal read response | OAST hit alone = egress only, not internal reach |
+| PDF/report/error renderers | `<iframe src=oast>` in fields reflected into error text | OAST callback from server IP; internal body embedded in generated artifact | "HTML in PDF" w/o server-side fetch proof |
+| GraphQL | `__type(name:"Mutation")` when `__schema` blocked; enumerate security-sensitive mutations | Victim password/pin changed; admin created | "introspection enabled" alone = informational |
+| SAML SPs | Swap NameID in own signed assertion; cross-SP replay; parser differentials | Session minted as victim | XSW theory without forged-session PoC |
+| OAuth callbacks | `referrerpolicy="unsafe-url"` + img subresource; `redirect_uri/../` path confusion | Attacker log holds live `code`, exchanged for victim session | Leak-to-own-page w/o code in URL |
+| Token-in-URL pages | Inventory SDK sinks (RUM, Segment, GA, Intercom) | Live token + identity field in telemetry payload, still redeeming | Token-in-URL alone; expired/self-scoped replay |
+| Multi-step signup flows | Replay minted tokens days later; dork param names | Stale token replays authenticated PII | Self-scoped or expired tokens |
+| Chat/support widgets | Boot with victim-shaped `user_data.email`, no hash | Victim chat history loads | `Missing user_hash` = configured; bare 200 ≠ vuln |
+| Gateway-fronted APIs | `X-HTTP-Method-Override` / `_method` on undefined-method req | 200-with-data vs 401 baseline | Headers ignored → same 401 both ways |
+| CAPTCHA-verify endpoints | Empty/missing/whitespace/garbage tokens | `{"success":true}` for all + privileged surface reachable | Client-side-only success w/o backend privilege |
+| Check-then-act endpoints | 20-30 reqs in one H2 packet (slow responders = wide window) | N successes where limit = 1 (negative balance, quota+1) | Flooded 200s w/o business-logic delta |
+| WAF + client-side sink pairs | `ja.va.sc.ri.pt.:`-style mismatch payloads (strip order differs) | `alert(document.domain)` on sensitive origin, second account | Self-XSS; delivery needing >2 steps |
+| Consent/authorize pages | Popup double-clickjacking under cursor | Recorded PoC + code redeemed | Needs iframe when XFO blocks it — popup is the variant |
+| JWT-bearing APIs | jwt_tool battery: `none`, RS256→HS256 w/ public key, `kid` traversal, weak-secret crack | Forged claims accepted / admin granted | Key-shaped value without working forge |
+
+**Credential-shape checks (all surfaces):** classify before testing — publishable (`pk_`*, Supabase publishable, analytics, API client keys) = not a finding; private = authenticate once, prove unlock, deauthenticate. Never exercise a live credential beyond the first proof.
+
+**Desync FP screen:** two responses on one connection is usually keep-alive concatenation, not smuggling — PoCs needing `requestsPerConnection>1` or same-connection send-groups are FPs. Confirm via a *separate*-connection follow-up receiving the prefixed victim response (PortSwigger pipelining-vs-smuggling rule).
+
+**Soft-404 screen:** apps returning 200 for all paths poison every content-discovery result — baseline-probe a nonsense path, fingerprint body hash+length, suppress matching responses. Findings matching the soft-404 fingerprint are FPs.
+
+**Cache-artifact screen:** a 200 on a cached path is not deception — the marker-based proof requires a victim-only marker appearing in the attacker's response to the same cache-keyed URL.

@@ -166,6 +166,27 @@ reaching the payment frame"), with H1-2345678 cited in `matches`.
 - **Dedupe again on retest.** If a finding is revisited days or weeks later,
   re-run this skill. Someone may have disclosed the same bug in the meantime.
 
+## Non-duplicate rules
+
+Two reports matching on any of these are explicitly NOT duplicates —
+record `overlap:` but keep the verdict at `novel`/`partial-overlap`:
+
+- **Different parameter, same endpoint** — the bug lives in the input
+  handling of a specific parameter; a sibling parameter's defect is its
+  own report.
+- **Different root cause** — stored vs reflected in the same field,
+  missing authz vs broken authz, different primitive class sharing a UI
+  symptom.
+- **Different severity** — a Medium path and a Critical chain through the
+  same code are distinct submissions.
+- **Different auth context** — authenticated-vs-unauthenticated reach of
+  the same defect = different attacker preconditions = different findings.
+- **Different protocol binding** — same bug reachable over REST vs
+  GraphQL vs WebSocket is per-binding until shown to share one code path.
+
+When in doubt, split — platforms dedupe on merge for you at no cost; a
+merged-out finding that was actually distinct is unrecoverable.
+
 ## Council verify
 
 At the verify gate only — a candidate about to be called `verified` —

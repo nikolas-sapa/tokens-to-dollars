@@ -403,6 +403,56 @@ Prior art from the same source: Keybase invite-limit bypass (hackerone.com/repor
 
 **FP-rule refinement:** literal reflection of `{{7*7}}` is no finding — the engine must evaluate it. A `49` produced client-side (JS template literals, Angular scope expressions) is front-end injection, not SSTI: verify evaluation is server-side by submitting through a non-browser client or checking whether the value persists rendered in a server-generated artifact. Sandbox-restricted evaluation (arithmetic works, object traversal blocked) is still reportable SSTI — report the demonstrated evaluation and the confinement boundary honestly.
 
+## PB-15 — SSRF internal-network fingerprinting and escalation
+
+**When it applies:** any confirmed server-side fetch (PB-9's rendering channels, webhook testers, URL previewers, import-from-URL, avatar fetchers) where the stock payloads — cloud metadata IPs, localhost — return nothing useful. A failed metadata fetch does not mean the SSRF is weak; it usually means the internal architecture is not standard cloud.
+
+**Provenance:** 2026 disclosed case ($8k) — blind SSRF escalated to full Kubernetes infrastructure exposure by reading leaked response headers; inesmartins k8s-SSRF methodology; H1-2262382 (the $25k PDF-renderer case, PB-9). Detection below is own-request probes only; internal-network actions stop at read-level proof.
+
+### Expanded method
+
+1. **Fingerprint through your own listener first [G2]:** point the SSRF at an echo endpoint/OAST listener you control. Inspect what the *server's* request carries — injected headers reveal the internal stack: `x-envoy-peer-metadata` / `x-envoy-peer-metadata-id` (Istio/Envoy sidecar, format `sidecar~<podIP>~<podName>.<namespace>.svc.cluster.local` leaks pod IP, name, namespace), `x-b3-*`/`x-request-id` chains, `via`, `server`, proxy identifying headers.
+2. **Read the full response for architecture leaks [G2]:** error bodies, `X-*` headers, and naming conventions in fetched internal URLs fingerprint the platform — `*.svc.cluster.local` naming → Kubernetes; `169.254.169.254` answering → cloud IMDS; `consul.`/`vault.` DNS → HashiCorp stack; kubelet endpoints → direct node access.
+3. **Route by naming convention, not payload lists [G3]:** once the stack is fingerprinted, derive internal service names from the leaked conventions and hit read-only endpoints — `http://<podIP>:10255/pods` (kubelet read-only port), cluster DNS names reconstructed from the sidecar metadata. Documented capability, not enumeration.
+4. **Prove, then stop [G3]:** for endpoints carrying destructive capability (shutdown/admin/monitoring write paths), document the *exposed* capability with a read-level request and state it in the report — never exercise the destructive action. CIA impact is proven by exposure + reach, not by taking production down.
+5. **Error-reflection channels (PB-9 extension):** any user string rendered into a server-side renderer (PDF/CSV/image/doc pipelines) is an HTML-injection candidate → `<iframe>`/`fetch` payloads fire the fetch from the renderer's network position, which differs from the app's.
+
+**FP-rule refinement:** a plain OAST callback with no internal reachability is Medium at best — the report needs the internal-response artifact (decoded mesh header + an internal body or status). A fetch that only reaches your own public listener proves egress, not internal SSRF. Reporting "HTML survived into a PDF" without the server-side fetch proof is the documented reject shape.
+
+## PB-16 — Token and credential leakage to telemetry and third-party surfaces
+
+**When it applies:** flows that place secrets in URLs or client-visible state (password reset, magic links, email verification, OAuth callbacks, invite acceptance), plus leaked-credential findings of any class — where the proof question is always "does this secret reach somewhere it shouldn't, and does it still work".
+
+**Provenance:** H1-4000185 (Segment) and H1-4071670 (Datadog RUM), Sep–Oct 2026 — live reset tokens recorded into vendor telemetry; moblig's $15k stale-token/PII case (Mar 2025); the Google-VRP Eclipse Referer-leak case and voorivex limited-HTMLi→code-exfil work (2025).
+
+### Expanded method
+
+1. **Token-in-URL inventory [G2]:** every flow minting a bearer secret — reset links, verify links, OAuth `code`/`token` params, invite tokens. Record where the token lands: URL path, query param, fragment (fragments don't hit Referer; query params do).
+2. **Telemetry-sink check [G2]:** on pages holding a live token, enumerate the page's SDK calls — Datadog RUM, Segment, GA, Intercom, NewRelic, Sentry. Look for `view.url`/`page.url`/`session replay` payloads recording the full URL verbatim at high sample rates with no `beforeSend` redaction. The oracle is the token + a same-session identity field (`anonymousId`, `session_id`, email) appearing together in the telemetry payload while the token still redeems.
+3. **Referer-channel check [G2]:** any subresource fetch (img, font, analytics pixel) from the token-bearing page sends `Referer` — a page allowing attacker-controlled images (`referrerpolicy="unsafe-url"`, limited HTMLi) leaks the full URL incl. `code`. Chrome <131 honored the attribute explicitly (CVE-2024-11110).
+4. **Stale-token replay [G2]:** multi-step flows (applications, onboarding, signups) minting tokens without expiry/rotation — replay the token days later against the authenticated step; also check indexed-token dorking for the parameter name.
+5. **Credential classification before reporting [G2]:** every key-shaped value gets sorted first — publishable (Stripe `pk_`, Supabase publishable, analytics tokens, Google API client keys: not a finding) vs private (unlocks data/actions a visitor can't reach: finding, and the report shows what it unlocked — see `../../reporter` reportability gate q3). Unvalidated key-shaped strings and already-flagged secret-scanning hits are rejected on sight; test once to authenticate, deauthenticate, never exercise beyond the first proof.
+
+**Evidence bar:** the telemetry payload (or Referer log on your listener) containing the live token + the pairing identity field, and the token's redemption at the legitimate endpoint — both halves, on your own accounts.
+
+**FP-rule refinement:** token-in-URL alone without a live sink is informational; an expired or self-scoped token replaying is informational; a leaked credential that unlocks nothing extra is a note. Pairing is the finding — secret plus a working sink or a demonstrated unlock.
+
+## PB-17 — Session and auth edge cases: identity proxies, method override, captcha-verify trust
+
+**When it applies:** authenticated surfaces fronted by third-party widgets (chat/support), API gateways, or CAPTCHA gates — the failure mode is a check that exists but binds to the wrong thing.
+
+**Provenance:** Intercom identity-misconfiguration writeups (19whoami19 Sep 2025; nuclei template `intercom-identity-misconfiguration`); ESPv2 CVE-2023-30845 method-override pattern (Bug Bytes #231, 2026); the P2 Turnstile-bypass→AI-agent-access case (akashmotkar001, 2026); double-clickjacking consent work — WakaTime H1-3287060 (Aug 2025) and Sentry's 1s Approve-delay fix (Mar 2026).
+
+### Expanded method
+
+1. **Third-party identity widgets [G2]:** support/chat widgets bootstrap identity from `user_data.email` (Intercom `boot`, `api-iam.intercom.io/messenger/web/ping`). Probe whether `user_hash`/`intercom_user_jwt` is enforced: boot with a victim-shaped email — a `Missing user_hash` error means configured; chat history loading means you just read another user's support transcript as them.
+2. **HTTP method-override at gateways [G2]:** on gateway-fronted APIs, send an undefined-method request plus `X-HTTP-Method-Override: <spec'd method>` (also `_method`, `X-HTTP-Method`) — gateway route-matches the overridden method while the JWT/auth filter already skipped it. Also fuzz PUT/DELETE/PATCH/HEAD on GET-only authed routes. Oracle: 200-with-data vs the 401 baseline.
+3. **CAPTCHA-verify endpoint trust [G2]:** find the verification endpoint/event (`captcha_verify` WS event, form submit backends). Send empty, missing, whitespace, garbage tokens — `{"success":true}` for all = no server-side check. Behind the gate, inventory what unlocks (agent access, prompt/tool-schema disclosure is itself a chain — pairs with PB-2).
+4. **SAML subject-binding [G2, G3 for forgery]:** three probes — (a) swap NameID/email inside your own valid signed assertion → SP verifies signature but not subject-to-account binding (cross-org ATO); (b) present SP-A's assertion to SP-B → missing AudienceRestriction (ZITADEL GHSA-x4c7-fpcx-w9q6); (c) parser differentials — duplicate namespace attrs, or wrap any IdP-signed XML doc around a forged assertion (PortSwigger "SAML Roulette"/"The Fragile Lock", Dec 2025). Oracle is a session minted as the victim.
+5. **Double-clickjacking on consent [G3]:** XFO blocks iframes but not popups — position a consent window's Authorize button under the victim's cursor across a scripted double-click (click 1 closes the decoy, click 2 authorizes). Oracle: screen-recorded PoC + the code redeemed.
+
+**FP-rule refinement:** a 200 on the ping endpoint alone proves nothing — the vulnerability is the *missing binding*, shown by victim-email data loading. Signed-but-misbound assertions need the working forged-session PoC; XSW theory without it gets rejected. Console-paste/self-scoped demos fail the `../../reporter` gate.
+
 ---
 
 # PART 2 — REPORT-QUALITY TRIAGE & PROGRAM-SCOPE DETAIL

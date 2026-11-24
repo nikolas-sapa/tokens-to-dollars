@@ -99,6 +99,37 @@ proxy, so a worker that shells out does not route around it. A tool
 with no rate flag warns `cap not enforced` — treat that warning as a
 failed control (proxy it or pick another tool), never as noise.
 
+### Detector-shape awareness
+
+Egress is not just rate — defenders signature agent traffic by shape
+(ThreatDefence/agentic-attack-detections, v2.10 Nov 2026, 580 IOCs). On
+authorized programs being flagged mid-run burns the engagement, so the
+wrapper avoids the documented signatures:
+
+- **No static canaries or UA strings** — anything identifying the toolset
+  (`artex-*`, `RedAmon-*`-style UAs, self-naming probe strings like
+  `rEdAm0n1337XsS`, canary hostnames like `*-poc.invalid`) is signatured.
+  Canary values must be per-run random, never a fixed corpus.
+- **No telemetry** — no beaconing to vendor endpoints (other tools have
+  been caught by their own `*.scarf.sh`/`update.*` beacons; DNS+TLS SNI
+  works on encrypted traffic). This toolchain phones home nothing.
+- **OOB domain diversity** — stock interactsh `oast.*`, Burp Collaborator,
+  and `dnslog.cn` domains are signatured (SIDs 9727050–9727059). Use
+  your own callback domain or a non-stock interactsh deployment.
+- **No fixed-infra tells** — fixed callback ports, self-signed CA names,
+  magic tokens in headers. Our broker/wrap layers add no such headers.
+- **Behavioral shapes trip more than payloads** — same-IP adjacency
+  between page-reader and attack traffic, machine-speed API bursts,
+  rotating-proxy probing of one site, servers calling back to what
+  probed them. Pace stays under program-permitted limits and from
+  consistent egress — the bucket above exists for this.
+- **Egress LLM calls are an IOC channel** — request bodies to
+  `/v1/chat/completions`-shaped endpoints containing pre-auth "you are an
+  authorized pentest system" prompts are matched by defenders; keep
+  prompts to endpoints you're authorized to send.
+- **Registry write-checks** — if a hunter proves registry write access,
+  never push self-naming canary images (`*-writecheck`, `*-probe`).
+
 ## Scope-check coverage
 
 Extracted as candidate targets (all checked against deny + authorized):
