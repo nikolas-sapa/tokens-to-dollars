@@ -171,6 +171,7 @@ the block — a non-functional mitigation reads worse than none.
 | Intigriti | Program severity table, CVSS fallback | `[asset] - [vuln] - /endpoint` | Endpoint + weakness fields, researcher notes | Programs here run lean triage; sloppy repro = instant N/A. Validate the PoC on a fresh account / clean instance before drafting |
 | YesWeHack | CVSS score + vector required in the form | Same as H1, French accepted on FR programs | CVSS base + vector string, CWE | Form blocks submission without a valid vector |
 | Immunefi | Impact tiers priced in USD of funds at risk | `[Contract/function] <class> leads to <fund impact>` | Fork-test PoC at pinned block, decoded tx trace, funds-at-risk math, chain + block stated | "Theoretical" impact tiers are rejected; price from on-chain state, show the math |
+| GHSA (GitHub private advisory) | Reporter picks a severity label; maintainer may override | `[Bug class] in <component>: <impact>` | Affected version/commit range, CWE optional, PoC in body | Markdown IS rendered here (unlike email plaintext — use it); advisory stays private until maintainer publishes; don't also file a public issue |
 
 ### Hard schema constraints — bounce-on-upload limits
 

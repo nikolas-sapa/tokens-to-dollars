@@ -67,6 +67,12 @@ standard"; actively-used-in-production required):
 
 ## Target-yield scoring (program selection, Nov 2026)
 
+Before scoring: `grep -i <candidate> knowledge/dead-targets.txt` — ruled-out
+targets live there (no public source, VDP-only, cold trail, routes-to-another-
+platform). When a target dies mid-evaluation, append it:
+`handle|reason|detail|YYYY-MM`. The ranker re-proposes known dead ends forever
+without this gate.
+
 Rank candidate programs before allocating compute — five signals:
 
 1. **Pay-on-triage vs pay-on-resolution.** Exposure debt (>60% of
