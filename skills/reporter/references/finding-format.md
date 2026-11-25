@@ -27,7 +27,12 @@ All line numbers refer to <tree/commit under review>.
 ```
 
 Trigger: <input or sequence that fires it, and where that input comes
-from — attacker, peer, race, operator>.
+from — attacker, peer, race, operator>. Where the data-flow chain is
+non-obvious, one line of source → sink: "<untrusted input enters at X>
+→ <unsafe thing happens at Y>".
+Reachability: <who can fire it — anyone unauthenticated, any holder,
+a role, only after a state precondition>. A finding without a stated
+reachability reads as hypothetical.
 Blast radius: <what else breaks/leaks/permanently wedges when it fires;
 what recovery looks like>.
 `path/file.ext:NNN`, `path/other.ext:NNN`. Severity: <level + one clause
