@@ -17,3 +17,4 @@ payloads/
 *.quarantine.jsonl
 docs/self-audit-*.md
 docs/dogfood-*.md
+.git-rewrite/
