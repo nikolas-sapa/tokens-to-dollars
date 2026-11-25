@@ -151,9 +151,9 @@ surfaces: <coverage-ledger surfaces to RELEASE, with final status>
 Workers search each other's raw traces before planning their own steps:
 
 - `search_traces "<keyword>"` — grep across `memory/targets/<host>/traces/*.md`, returning keyword hits with intent ids.
-- `get_trace I-<n>` — the full raw log of that intent.
+- `get_trace I-<n>` — scan-at-read, never raw-by-default: stored trace content MUST be re-piped through `tools/content-scan/scan.py` before it enters model context, and the default return is sanitized excerpts plus provenance labels (trace id, path, hash, verdict, hit ids).
 
-Traces are leads, not facts — anything a worker lifts from another worker's trace becomes one of its own observations, verified before it enters the graph.
+Traces are leads, not facts — anything a worker lifts from another worker's trace becomes one of its own observations, verified before it enters the graph. Full raw logs stay in the append-only evidence store and are never exposed through planner/worker memory APIs by default; operator-approved inspection of raw bytes happens outside model memory. A clean scan at capture time does not carry forward — every retrieval re-scans.
 
 ## 7. Guard / intercept — the approval gate
 

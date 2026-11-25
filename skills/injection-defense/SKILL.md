@@ -102,11 +102,13 @@ planner. Contract:
   verdict is `clean`, `suspicious`, or `hostile` (exit codes 0/1/2); each
   hit names the rule id that fired.
 - `scan.py --sanitize` → emits the content with zero-width and
-  bidi/format characters stripped and every matched payload wrapped in
-  `[REDACTED-<rule-id>]` markers — the copy the planner reasons over, with
-  the hits still visible where they fired. The untouched original still
-  lands in the evidence store; sanitized text is for reasoning, never the
-  record.
+  bidi/format characters stripped and every matched payload excised to a
+  `[removed:<rule-id>]` marker — the copy the planner reasons over, with
+  the hits still visible where they fired. Normalized-only hits are mapped
+  back to source spans; if one cannot be mapped or survives the rewrite,
+  the output is an `[unsafe: ...]` marker and must not enter planner
+  context. The untouched original still lands in the evidence store;
+  sanitized text is for reasoning, never the record.
 
 Verdicts drive the pipeline: `clean` passes through; `suspicious` reaches
 the planner sanitized plus a trace node listing the hits; `hostile` never
@@ -126,10 +128,10 @@ exfil channel: a poisoned page can talk the agent into emitting a remote
 image or auto-fetch link that ships data to the attacker's host on render
 (the EchoLeak channel). Before generated markdown leaves the workspace —
 report draft, comment, PR body — pipe it through `scan.py --egress`: the
-full signature pass plus remote-image, auto-fetch-tag, and blob-URL rules.
-External images and auto-fetch links are stripped before send; evidence
-references stay internal paths into `evidence/<finding-id>/`, never
-hosted URLs.
+full signature pass plus remote-image, auto-fetch-tag, blob-URL, session-
+credential, local-path, and internal-IP rules. External images and
+auto-fetch links are stripped before send; evidence references stay
+internal paths into `evidence/<finding-id>/`, never hosted URLs.
 
 The human gate is content too. Anything rendered in an approval UI —
 fetched page text, tool output, the draft itself — must be the sanitized

@@ -82,6 +82,21 @@ INJECTION = [  # toolfence checks/index.ts INJECTION_PATTERNS — all critical
     ("inj-coercive-preinstruction", "critical",
      r"before\s+(using|calling)\s+this\s+tool[,.]?\s+(you\s+must|first|always)\b",
      "coercive pre-instruction"),
+    ("inj-manifest-control-write", "critical",
+     r"(?:^|[\n.!?;:])\s*(?:[-*•]\s+|\d+[.)]\s+)?"
+     r"(?:please\s+|you\s+(?:must|should|shall|need\s+to)\s+)?"
+     r"(?:copy|write|add|append|insert|paste|merge|place|create)\b"
+     r"[\s\S]{0,160}?"
+     r"(?:\broe-manifest(?:\.md)?\b|\bharmless_allow\b|\ballow_g3\b"
+     r"|[\"'`]workspace[\"'`]|\bworkspace\s*:|#{1,6}\s*workspace\b"
+     r"|\bworkspace\b(?=\s+(?:section|key|heading|entry|line)\b)"
+     r"|\b(?:section|key|heading|entry|line)\s+workspace\b)",
+     "instruction to write guardian-control manifest keys"),
+    ("inj-self-concealment", "critical",
+     r"\bdo\s+not\s+(?:quote|mention|include|reveal|disclose|show|surface)"
+     r"\s+(?:this|these)\s+(?:note|instructions?|messages?|lines?|payload)\b"
+     r"[^.]{0,60}?\b(?:human|operator|reviewer|user|summary)\b",
+     "self-concealment instruction"),
 ]
 
 _ROLE_PREFIX = r"(?:^|\n|(?<=[.!?])\s)\s*(?:system|assistant|user)\s*:"
@@ -173,16 +188,117 @@ _EG_IMG_URL = re.compile(r"!\[[^\]]*\]\(\s*(https?://[^)\s]+)")
 _EG_IMG_REF = re.compile(r"!\[[^\]]*\]\[([^\]\s]+)\]")
 _EG_REF_DEF = re.compile(r"^\s{0,3}\[([^\]]+)\]:[ \t]*(\S+)", re.M)
 _EG_AUTOFETCH = re.compile(
-    r"<(?:img|iframe|script|source|video|audio|link)\b[^>]{0,300}?"
-    r"(?:src|href)\s*=\s*[\"']?\s*(https?://[^\s\"'>]+)", re.I)
+    r"<(?:img|iframe|script|source|video|audio|link|image|embed|object|input|body|svg|use|table|td|th)\b"
+    r"[^>]{0,500}?(?:src|href|srcset|poster|background|xlink:href)"
+    r"\s*=\s*[\"']?\s*(https?://[^\s\"'>]+)", re.I)
+_EG_CSS_URL = re.compile(
+    r"\burl\(\s*[\"']?\s*(https?://[^\s\"')]+)", re.I)
+_EG_META_REFRESH = re.compile(
+    r"<meta\b(?=[^>]*\bhttp-equiv\s*=\s*[\"']?refresh\b)"
+    r"(?=[^>]*\bcontent\s*=\s*[\"'][^\"']*?\burl\s*=\s*"
+    r"(https?://[^\s\"'>;]+))[^>]*>", re.I)
 _EG_URL_BLOB = re.compile(
     r"https?://[^\s)\]\"'<>]*[A-Za-z0-9+/=_-]{80,}")
+_EG_COOKIE = re.compile(
+    r"\b(?:set-)?cookie[\"']?\s*:\s*[^\s,;\r\n]+", re.I)
+_EG_AUTHORIZATION = re.compile(
+    r"\bauthorization[\"']?\s*[:=]\s*[\"']?\s*"
+    r"(?:bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{4,}", re.I)
+_EG_JWT = re.compile(
+    r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\."
+    r"[A-Za-z0-9_-]{5,}(?![A-Za-z0-9_-])")
+_EG_HOME_PATH = re.compile(
+    r"(?<![\w.-])/(?:Users|home)/[^\s\"')\]}]+")
+_IP_OCTET = r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])"
+_EG_RFC1918 = re.compile(
+    r"(?<![\w.])(?:10(?:\." + _IP_OCTET + r"){3}"
+    r"|192\.168(?:\." + _IP_OCTET + r"){2}"
+    r"|172\.(?:1[6-9]|2[0-9]|3[01])(?:\." + _IP_OCTET + r"){2})(?![\w.])")
+
+EGRESS_PRIVACY = [
+    (_EG_COOKIE, "egress-cookie-header",
+     "Cookie/Set-Cookie header in outbound content (session exfiltration)"),
+    (_EG_AUTHORIZATION, "egress-authorization-header",
+     "Authorization Bearer/Basic/token credential in outbound content"),
+    (_EG_JWT, "egress-jwt-token",
+     "JWT-shaped base64url credential in outbound content"),
+    (_EG_HOME_PATH, "egress-local-home-path",
+     "absolute local home path in outbound content"),
+    (_EG_RFC1918, "egress-rfc1918-ip",
+     "RFC1918 internal IP address in outbound content"),
+]
+
+
+_WS_CHAR = re.compile(r"\s")
+
+
+def _fold_mapped(text):
+    """NFKC + strip invisibles + confusable→Latin, with a source index map.
+
+    Most compatibility folds are per-codepoint, and for those every folded
+    character can point back at the raw character it came from. Canonical
+    reordering/composition can make NFKC many-to-one; when the per-codepoint
+    fold differs from real NFKC the map is absent and sanitize() must fail
+    closed rather than pretend it knows the source span.
+    """
+    out = []
+    index = []
+    for i, ch in enumerate(text):
+        for folded_ch in unicodedata.normalize("NFKC", ch):
+            if _STRIP_RE.match(folded_ch):
+                continue
+            for mapped_ch in folded_ch.translate(_CONFUSABLES):
+                out.append(mapped_ch)
+                index.append(i)
+    mapped = "".join(out)
+    exact = _STRIP_RE.sub("", unicodedata.normalize("NFKC", text)).translate(
+        _CONFUSABLES)
+    cross_char = any(
+        unicodedata.combining(ch) or
+        (0x1100 <= ord(ch) <= 0x11ff) or  # Hangul jamo compose across chars
+        (0x3130 <= ord(ch) <= 0x318f) or  # compatibility jamo
+        (0xac00 <= ord(ch) <= 0xd7a3)     # Hangul syllables
+        for ch in text)
+    if mapped == exact and not cross_char:
+        return mapped, index
+    return exact, None
+
+
+def _collapse_ws_mapped(text, index):
+    """Whitespace-collapse like re.sub(r"\\s+", " ", text), keeping the map."""
+    if index is None:
+        return re.sub(r"\s+", " ", text), None
+    out = []
+    out_index = []
+    in_ws = False
+    for i, ch in enumerate(text):
+        if _WS_CHAR.match(ch):
+            if not in_ws:
+                out.append(" ")
+                out_index.append(index[i])
+            in_ws = True
+        else:
+            out.append(ch)
+            out_index.append(index[i])
+            in_ws = False
+    return "".join(out), out_index
 
 
 def _fold(text):
     """NFKC + strip invisibles + confusable→Latin (what a reader actually sees)."""
-    t = unicodedata.normalize("NFKC", text)
-    return _STRIP_RE.sub("", t).translate(_CONFUSABLES)
+    return _fold_mapped(text)[0]
+
+
+def _normalized_views(text):
+    folded, folded_index = _fold_mapped(text)
+    flat, flat_index = _collapse_ws_mapped(folded, folded_index)
+    return folded, folded_index, flat, flat_index
+
+
+def _source_span(m, index):
+    if index is None or m.end() == m.start() or m.end() > len(index):
+        return None
+    return index[m.start()], index[m.end() - 1] + 1
 
 
 def _snippet(m, text):
@@ -194,36 +310,49 @@ def _snippet(m, text):
     return re.sub(r"\s+", " ", match), re.sub(r"\s+", " ", ctx).strip()
 
 
-def scan(text):
+def _scan(text, want_spans=False):
     """One hit per rule: raw text first, folded text as fallback."""
-    folded = _fold(text)
-    flat = re.sub(r"\s+", " ", folded)
+    folded, folded_index, flat, flat_index = _normalized_views(text)
     hits = []
     for r in RULES:
         m = r["re"].search(text)
         if m:
             match, ctx = _snippet(m, text)
-            hits.append({"rule": r["id"], "severity": r["sev"],
-                         "label": r["label"], "match": match,
-                         "context": ctx, "normalized": False})
+            hit = {"rule": r["id"], "severity": r["sev"],
+                   "label": r["label"], "match": match,
+                   "context": ctx, "normalized": False}
+            if want_spans:
+                hit["_span"] = m.span()
+            hits.append(hit)
             continue
         if r["unicode"]:
             continue
-        # Role prefix keeps its anchors; everything else runs on the
-        # whitespace-collapsed fold so "ignore all\nprevious instructions"
-        # and "Ig<ZWSP>nore" land as one payload.
-        target = folded if r["id"] == "grip-role-prefix" else flat
-        src = target
-        m = r["re"].search(src)
-        if m is None and src is not folded:
-            src = folded
+        # Anchor-sensitive rules keep the unfolded line structure; everything
+        # else runs on the whitespace-collapsed fold so "ignore all\nprevious
+        # instructions" and "Ig<ZWSP>nore" land as one payload.
+        if r["id"] in ("grip-role-prefix", "inj-manifest-control-write"):
+            targets = ((folded, folded_index),)
+        else:
+            targets = ((flat, flat_index), (folded, folded_index))
+        for src, index in targets:
             m = r["re"].search(src)
-        if m:
+            if m is None:
+                continue
             match, ctx = _snippet(m, src)
-            hits.append({"rule": r["id"], "severity": r["sev"],
-                         "label": r["label"], "match": match,
-                         "context": ctx, "normalized": True})
+            hit = {"rule": r["id"], "severity": r["sev"],
+                   "label": r["label"], "match": match,
+                   "context": ctx, "normalized": True}
+            if want_spans:
+                span = _source_span(m, index)
+                if span is not None:
+                    hit["_span"] = span
+            hits.append(hit)
+            break
     return hits
+
+
+def scan(text):
+    return _scan(text)
 
 
 def verdict(hits):
@@ -249,10 +378,10 @@ def _allowlisted(url):
     return bool(h) and h.lower() in EGRESS_HOST_ALLOWLIST
 
 
-def egress_scan(text):
-    """Outbound-only checks layered on scan(): remote images/auto-fetch
-    tags (EchoLeak) and blob-carrying URLs in generated output."""
-    hits = []
+def _egress_matches(text):
+    for rx, rule, label in EGRESS_PRIVACY:
+        for m in rx.finditer(text):
+            yield m, rule, "high", label
     refdefs = {m.group(1).lower(): m.group(2)
                for m in _EG_REF_DEF.finditer(text)}
     checks = (
@@ -264,6 +393,10 @@ def egress_scan(text):
          lambda m: refdefs.get(m.group(1).lower())),
         (_EG_AUTOFETCH, "egress-autofetch-tag", "high",
          "HTML auto-fetch tag loading a remote URL", lambda m: m.group(1)),
+        (_EG_CSS_URL, "egress-css-url", "high",
+         "CSS url() fetching a remote URL", lambda m: m.group(1)),
+        (_EG_META_REFRESH, "egress-meta-refresh", "high",
+         "meta refresh navigating to a remote URL", lambda m: m.group(1)),
         (_EG_URL_BLOB, "egress-url-blob", "high",
          "long base64/hex blob inside URL (data smuggling)",
          lambda m: None),
@@ -275,21 +408,98 @@ def egress_scan(text):
                 continue  # relative/internal target — no exfil channel
             if url and _allowlisted(url):
                 continue
-            match, ctx = _snippet(m, text)
-            hits.append({"rule": rule, "severity": sev, "label": label,
-                         "match": match, "context": ctx,
-                         "normalized": False})
+            yield m, rule, sev, label
+
+
+def egress_scan(text):
+    """Outbound-only checks layered on scan(): remote images/auto-fetch
+    tags (EchoLeak), blob-carrying URLs, and session/local-path material."""
+    hits = []
+    for m, rule, sev, label in _egress_matches(text):
+        match, ctx = _snippet(m, text)
+        hits.append({"rule": rule, "severity": sev, "label": label,
+                     "match": match, "context": ctx,
+                     "normalized": False})
     return hits
 
 
-def sanitize(text):
-    """Strip invisible/format chars, then excise each rule match."""
-    s = _STRIP_RE.sub("", text)
-    for r in RULES:
-        if r["unicode"]:
+def _rule_spans(r, text, views):
+    """All raw and normalized source spans for one rule in text."""
+    spans = [(m.start(), m.end(), r["id"])
+             for m in r["re"].finditer(text)]
+    if r["unicode"]:
+        return spans, False
+    folded, folded_index, flat, flat_index = views
+    if r["id"] in ("grip-role-prefix", "inj-manifest-control-write"):
+        targets = ((folded, folded_index),)
+    else:
+        targets = ((flat, flat_index), (folded, folded_index))
+    unmapped = False
+    seen = set()
+    for src, index in targets:
+        for m in r["re"].finditer(src):
+            span = _source_span(m, index)
+            if span is None:
+                unmapped = unmapped or r["sev"] != "info"
+                continue
+            if span in seen:
+                continue
+            seen.add(span)
+            spans.append((span[0], span[1], r["id"]))
+    return spans, unmapped
+
+
+def _merge_spans(spans):
+    merged = []
+    for start, end, rule in sorted(spans):
+        if end <= start:
             continue
-        s = r["re"].sub("[removed:%s]" % r["id"], s)
-    return s
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+            if rule not in merged[-1][2]:
+                merged[-1][2].append(rule)
+        else:
+            merged.append([start, end, [rule]])
+    return merged
+
+
+def sanitize(text, egress=False):
+    """Strip invisibles, then excise raw and normalized-only rule matches.
+
+    Normalized-only hits are mapped back to their source spans. If a hit
+    cannot be mapped, or a non-info hit survives the rewrite, the output
+    fails closed instead of emitting attacker instructions verbatim. With
+    egress=True, outbound privacy/exfil hits are excised under the same
+    fail-closed rule.
+    """
+    s = _STRIP_RE.sub("", text)
+    views = _normalized_views(s)
+    spans = []
+    unmapped = False
+    for r in RULES:
+        rule_spans, rule_unmapped = _rule_spans(r, s, views)
+        spans.extend(rule_spans)
+        unmapped = unmapped or rule_unmapped
+    if unmapped:
+        return "[unsafe: normalized-only content could not be redacted]"
+
+    out = s
+    for start, end, rules in sorted(_merge_spans(spans),
+                                    key=lambda x: x[0], reverse=True):
+        out = (out[:start] + "[removed:%s]" % "+".join(rules) +
+               out[end:])
+    if egress:
+        egress_spans = [(m.start(), m.end(), rule)
+                        for m, rule, _sev, _label in _egress_matches(out)]
+        for start, end, rules in sorted(_merge_spans(egress_spans),
+                                        key=lambda x: x[0], reverse=True):
+            out = (out[:start] + "[removed:%s]" % "+".join(rules) +
+                   out[end:])
+    residual = [h for h in scan(out) if h["severity"] != "info"]
+    egress_residual = egress_scan(out) if egress else []
+    if residual or egress_residual:
+        return "[unsafe: matched content survived sanitization]"
+    return out
 
 
 def scan_text(s):
@@ -325,7 +535,7 @@ def main():
         hits += egress_scan(text)
     v = verdict(hits)
     if args.sanitize:
-        out = sanitize(text)
+        out = sanitize(text, egress=args.egress)
         sys.stdout.write(out)
         if not out.endswith("\n"):
             sys.stdout.write("\n")

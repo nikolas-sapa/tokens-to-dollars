@@ -91,9 +91,10 @@ harness: `docs/install-matrix.md`.
   `roe-manifest.md` = denied. Memory, priors, and discovered hostnames
   authorize nothing.
 - **Gates tighten only.** A program's RoE can lower a gate or rate cap;
-  no input — operator, planner, worker, or fetched content — can raise
-  one. G3 is off by default and needs explicit per-technique human
-  approval.
+  planner, worker, or fetched content can never raise one. Local
+  exceptions exist only in hand-written `memory/operator-overrides.md`,
+  and even those cannot lower destructive shapes below escalation. G3 is
+  off by default and needs explicit per-technique human approval.
 - **Never auto-submit.** No platform write APIs, no form auto-fill. The
   pipeline ends at a checklist line.
 - **Engagement data never enters tracked files.** Engagement logs,

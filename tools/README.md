@@ -273,12 +273,29 @@ Speaks `initialize`, `tools/list`, `tools/call`, `ping`; tool failures return
 `isError` content, protocol failures use JSON-RPC codes.
 
 Every `tools/call` is adjudicated by `guardian/` before dispatch
-(`run_tool` → `adjudicate` → `subprocess.run`): `allow` executes
+(`run_tool` → `adjudicate` → bounded subprocess): `allow` executes
 normally, `escalate` returns a structured pending-approval result
 (`{"status":"escalated","hold":<action_sha256>,...}`) without executing,
-`deny` returns `{"status":"denied","rule","class",...}`. The manifest of
+`deny` returns `{"status":"denied","rule","class",...}`. Local path
+operands are part of the logical argv guardian judges. The manifest of
 the engaged program comes from the call's `manifest` arg, `T2D_MANIFEST`,
-or a single `memory/targets/<program>/roe-manifest.*`; a missing
-adjudicator or manifest fails closed to escalate, never allow. Verdicts
-land in the hash-chained decision log (`memory/audit.jsonl`). See
+a `content_scan` `program` context, or a single
+`memory/targets/<program>/roe-manifest.*`; a missing adjudicator or
+manifest fails closed to escalate, never allow. Verdicts land in the
+hash-chained decision log (`memory/audit.jsonl`). See
 `tools/guardian/README.md` § MCP dispatch path.
+
+`content_scan` is metadata-first: by default it returns only
+`{"verdict","hits":[{"rule","severity","line",...}]}`, not the scanned
+file or hit contexts. A content copy is returned only when
+`include_content` is true; `sanitize` controls whether that copy is
+sanitized. Scanning a file under
+`memory/targets/<program>/` requires a matching `program` argument;
+paths outside the engagement tree are unaffected by that check.
+
+Child processes run in a new process group. On timeout the server sends
+SIGTERM, then SIGKILL, to the whole group and reports if survivors remain.
+stdout/stderr capture is bounded to 256 KiB or 2000 lines per stream;
+oversized output is an `isError` result with a deterministic truncation
+notice, not silent context flood. Model-facing errors redact operator
+paths as `$ROOT`/`$HOME`.

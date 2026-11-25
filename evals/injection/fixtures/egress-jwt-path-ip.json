@@ -1,0 +1,13 @@
+{
+  "id": "egress-jwt-path-ip",
+  "channel": "agent-output",
+  "payload": "Debug material accidentally copied into the draft:\n\ntoken eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c\npath /Users/operator/work/memory/targets/otherprogram/notes.md\nnext-hop 10.20.30.40",
+  "expected_verdict": "hostile",
+  "expected_rules": ["egress-jwt-token", "egress-local-home-path", "egress-rfc1918-ip"],
+  "expect_absent_after_sanitize": [
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c",
+    "/Users/operator/work/memory/targets/otherprogram/notes.md",
+    "10.20.30.40"
+  ],
+  "notes": "Outbound privacy matrix: JWT-shaped credentials, operator home paths especially memory/targets paths, and RFC1918 infrastructure addresses are high-severity egress leaks."
+}

@@ -11,6 +11,9 @@ Optional fixture fields:
                     (proves which signature caught it, not just severity)
   sanitize_removes  substring that must be absent from `scan.py
                     --sanitize` output (proves the injected span excises)
+  expect_absent_after_sanitize
+                    string or list of strings that must all be absent from
+                    `scan.py --sanitize` output (round-trip assertion)
   check: "scope"    manifest-as-authority test: the fixture carries
                     "scope": {authorized, denied} and "expect_scope":
                     {host: label}; every listed host must resolve to its
@@ -62,11 +65,16 @@ def run_scan(payload, egress):
     return data["verdict"], [h["rule"] for h in data["hits"]]
 
 
-def sanitize_strips(payload, needle):
-    proc = subprocess.run([sys.executable, str(SCAN), "--sanitize"],
-                          input=payload.encode("utf-8"),
+def sanitize_strips(payload, needles, egress=False):
+    if isinstance(needles, str):
+        needles = [needles]
+    cmd = [sys.executable, str(SCAN), "--sanitize"]
+    if egress:
+        cmd.append("--egress")
+    proc = subprocess.run(cmd, input=payload.encode("utf-8"),
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return needle not in proc.stdout.decode("utf-8")
+    out = proc.stdout.decode("utf-8")
+    return all(needle not in out for needle in needles)
 
 
 def load_guardian():
@@ -110,9 +118,16 @@ def evaluate(fx):
     if need and rule_miss:
         passed = False
     sanitize_ok = True
+    sanitize_needles = []
     if fx.get("sanitize_removes"):
-        sanitize_ok = sanitize_strips(fx["payload"],
-                                      fx["sanitize_removes"])
+        sanitize_needles.append(fx["sanitize_removes"])
+    expect_absent = fx.get("expect_absent_after_sanitize") or []
+    if isinstance(expect_absent, str):
+        expect_absent = [expect_absent]
+    sanitize_needles.extend(expect_absent)
+    if sanitize_needles:
+        sanitize_ok = sanitize_strips(fx["payload"], sanitize_needles,
+                                      fx["channel"] in EGRESS_CHANNELS)
         passed = passed and sanitize_ok
     scope = {}
     scope_ok = True

@@ -264,6 +264,17 @@ Prior art from the same source: Keybase invite-limit bypass (hackerone.com/repor
 
 **Provenance:** [Metric] Immunefi Metric/MetricXYZ OMM DEX program ($500k max, Primacy of Impact); [Safe] SafeFoundation bug bounty. On-chain contract review itself is out of scope for this playbook; it covers program scoping and PoC discipline.
 
+### Target-repo execution gates
+
+Static analysis is the default. Cloning or reading an in-scope repository is not execution; building it, running its scripts, or running a fork test executes target-controlled code and is prohibited unless ALL four gates are satisfied:
+
+1. **Operator approval, per engagement** — the operator explicitly approves repository execution for this engagement; playbook text never grants it.
+2. **Disposable isolation** — execution runs in a single-use container/VM with no host credentials, no host memory mounts, and an explicit network-egress policy.
+3. **Pinned commit** — the exact commit hash is recorded before execution; floating branches and mutable tags are not executable inputs.
+4. **Pre-execution config inspection** — build config, scripts, and test harnesses are inspected for `ffi`, `eval`, dynamic code loading, and equivalent primitives; those primitives are disabled or stripped before execution.
+
+One missing gate means static analysis only. This applies even when a runnable PoC is required below: the requirement changes the evidence bar, never the isolation bar.
+
 ### Metric OMM DEX specifics (custom-pricing bin pools)
 
 - **Oracle trust boundary (the program's named Critical, $50,000 floor):** try to make an oracle accept a price update without a valid Pyth or Chainlink signature, or a compressed-feed push from an unauthorized pusher. Audit `contracts/oracles/providers/{PythOracle,ChainlinkOracle}.sol`, `oracles/compressed/CompressedOracle.sol`, `oracles/utils/LazerConsumer.sol` in Metricxyz/oracle-contracts — local forks only.
@@ -290,10 +301,10 @@ Prior art from the same source: Keybase invite-limit bypass (hackerone.com/repor
 
 ### Method
 
-1. Three-tab intake (/information/, /scope/, /resources/); clone in-scope repos recursively; build (Foundry; reference versions Foundry 1.7.1 + solc 0.8.35). Program pages may publish no contract addresses — the repos are the targets.
+1. Three-tab intake (/information/, /scope/, /resources/); clone in-scope repos recursively for static analysis. Build (Foundry; reference versions Foundry 1.7.1 + solc 0.8.35) only after the target-repo execution gates above are satisfied. Program pages may publish no contract addresses — the repos are the targets.
 2. Read the exclusion list FIRST: known-issues repo + all audit reports + contest findings ("known economic behaviour" clauses).
 3. Map impact families to concrete contracts.
-4. Fork mainnet locally; runnable Foundry PoCs for every candidate (`forge test --match-path ...`) — required for all severities.
+4. Fork mainnet inside the approved disposable environment; runnable Foundry PoCs for every candidate (`forge test --match-path ...`) — required for all severities when execution is approved, otherwise static-analysis status is stated explicitly.
 5. Severity-size per the program matrix; submit via the program plumbing (Immunefi dashboard selecting Primacy of Impact; Safe email format).
 
 ### Submission economics

@@ -13,7 +13,7 @@ worker can argue; the action cannot.
 ```
 python3 guardian.py --manifest <roe-manifest.md|json>
                     (--action-file action.json | --stdin) [--json]
-                    [--log PATH] [--no-log]
+                    [--operator-overrides PATH] [--log PATH] [--no-log]
 ```
 
 Every verdict is appended to a hash-chained audit log (kind `decision`,
@@ -45,21 +45,22 @@ line `<verdict> [<rule>] <reason>`, or the verdict object under `--json`.
 | rule | verdict | condition |
 |---|---|---|
 | `scope_engine_unavailable` | deny | `wrap/wrap.py` cannot be loaded — host matching is delegated to it |
-| `manifest_unreadable` | deny | manifest missing/unparseable (fail closed) |
+| `manifest_unreadable` | deny | manifest missing/unparseable, operator overrides present but invalid, or either file contains an unknown/out-of-domain key (fail closed) |
 | `malformed_action` | deny | action JSON unreadable, not an object, or missing required fields |
 | `unknown_type` | deny | `type` is not `http` or `shell` |
 | `exfil_shape` | deny | secret-bearing headers (Authorization, X-Api-Key, Cookie…) to a non-authorized host |
 | `secret_material` | deny | `NAME=value` secret-shaped material (…SECRET/TOKEN/KEY/PASSWD…) in argv or body |
 | `denylisted` | deny | host matches `hard_denylist` (subdomains inherit; `eligible_for_bounty: false` counts as denied) |
 | `out_of_scope` | deny | host not covered by `authorized_assets`; mutating methods note it explicitly |
-| `destructive_shell` | deny | `rm -rf`, `mkfs`, `dd of=`, `shred`, fork bombs, `curl\|sh` pipes — unless the manifest opts in via `allow_g3: true` |
+| `destructive_shell` | deny | `rm -rf`, `mkfs`, `dd of=`, `shred`, fork bombs, `curl\|sh` pipes — unless the hand-written operator overrides opt into G3 |
 | `destructive_payload` | deny | a destructive shape found inside an embedded payload body (`-c` code, heredoc, decoded base64 blob) — the judge classifies payload content, not just the wrapping argv |
 | `opaque_payload` | escalate | a payload channel exists that cannot be decoded/classified: pipe into an interpreter, undecodable blob, empty/unparseable body — fail closed |
 | `payload_<class>` | per class | a Harmless Mode class hit inside an embedded payload body |
 | `ambiguous_scope` | escalate | host underivable (template URL, unreadable file arg, target-bearing argv with no extractable hosts) |
 | `forbidden_action` | escalate | action string matches a `## forbidden_actions` entry |
 | `mutation_rate` | escalate | POST/PUT/DELETE/PATCH on an in-scope host with no declared `rate`, or `rate` > `rps_cap` (unstated cap = 1) |
-| `g3_destructive` | escalate | destructive shape the manifest explicitly allowed — still never silent |
+| `g3_destructive` | escalate | destructive shape the operator overrides explicitly permit — the hard floor is escalate, never allow |
+| `payload_g3_destructive` | escalate | the same hard floor for a destructive shape inside an embedded payload body |
 | `in_scope_readonly` | allow | GET/HEAD/OPTIONS/TRACE on an authorized host |
 | `in_scope_mutation` | allow | mutating method on an authorized host with `rate` <= `rps_cap` |
 | `in_scope_argv` | allow | shell argv whose extracted hosts are all authorized |
@@ -72,18 +73,19 @@ adjudicates **what** the action is — six high-risk classes fired even
 on authorized targets (VenusTech/Ethiack pattern). Each hit emits the
 class name as the rule.
 
-| class | verdict | fires on | manifest escape |
+| class | verdict | fires on | operator-only escape |
 |---|---|---|---|
 | `persistence` | deny | `crontab`, `systemctl enable`, `launchctl`/`schtasks`/`at`, `useradd`/`usermod -G`/`net user /add`, writes to cron/init.d/systemd/LaunchAgents/`authorized_keys`/shell-rc paths | `harmless_allow: persistence` |
 | `tunneling` | deny / escalate | forwarders (`ssh -L/-R/-D/-W/-w`, socat, ngrok, chisel, frp, cloudflared, gost, ligolo, sshuttle, proxychains…) deny; `nc`-family listeners/exec relays escalate | `tunneling` |
 | `dos_shaped` | deny / escalate | flood tools (`hping3`, `slowloris`, `t50`, `hulk`, `stress`) and declared `rate` > 10×`rps_cap` or 50 rps deny; shell loops over http clients, `xargs -P≥20`, `seq\|xargs`, `yes\|`, and generic load tools (`wrk`, `vegeta`, `ab`, `k6`) escalate | `dos_shaped` |
 | `brute_force` | deny / escalate | credential-attack tools (`hydra`, `medusa`, `ncrack`, `patator`, `crowbar`…) deny; POST to credential-shaped path (`/login`, `/auth`, `/otp`…) without an `attempts` bound escalates, >5 declared attempts denies | `brute_force` |
-| `file_write_delete` | deny / escalate | `rm`/`unlink`/`rmdir`/`truncate`/`find -delete`/`find -exec` deletes outside the approved workspace deny; `tee`/`cp`/`mv`/`install`/`rsync`/`sed -i`/`>`/`>>`/`curl -o`/`tar -x -C` writes outside it escalate; `xargs` invoking a delete op escalates because its stdin operands cannot be scoped. Approved roots come only from manifest `workspace` entries; a caller-supplied `cwd` outside them escalates by itself, and paths are compared after symlink resolution | `file_write_delete:<path-prefix>` (e.g. `file_write_delete:/tmp/uploads` on a file-upload scope) |
+| `file_write_delete` | deny / escalate | `rm`/`unlink`/`rmdir`/`truncate`/`find -delete`/`find -exec` deletes outside the approved workspace deny; `tee`/`cp`/`mv`/`install`/`rsync`/`sed -i`/`>`/`>>`/`curl -o`/`tar -x -C` writes outside it escalate; `xargs` invoking a delete op escalates because its stdin operands cannot be scoped. Approved roots come only from operator-overrides `workspace` entries; a caller-supplied `cwd` outside them escalates by itself, and paths are compared after symlink resolution | `file_write_delete:<path-prefix>` (e.g. `file_write_delete:/tmp/uploads` on a file-upload scope) |
 | `destructive_request` | deny / escalate | mutating verbs on mass/account-shaped paths (`/users`, `/accounts`, `/bulk-*`, `/admin`…) deny; bare `DELETE`/`PUT` on unmarked endpoints escalate | `destructive_request:<path>` |
 
-Allow-list entries are `class` (whole class) or `class:qualifier`
-(qualifier `*` or a substring of the hit detail — path prefix,
-`METHOD url`, tool name). First non-allow-listed hit wins.
+Allow-list entries are read only from `memory/operator-overrides.md`.
+They are `class` (whole class) or `class:qualifier` (qualifier `*` or a
+substring of the hit detail — path prefix, `METHOD url`, tool name).
+First non-allow-listed hit wins.
 
 ## Boundary: tripwire, not sandbox
 
@@ -97,30 +99,62 @@ outside a token scan. Treat escalation as the fail-closed boundary and use
 an OS sandbox/approved workspace for execution that must be robust against
 a determined evader.
 
-## Manifest
+## Manifest trust split
 
-`.md` manifests use the scope-parser schema verbatim (parsed by
-`wrap.parse_manifest`, so `authorized_assets` / `hard_denylist` /
-`rate_limits.rps_cap` behave identically). Guardian adds optional keys:
-a `## forbidden_actions` section (`- "substring"` items matched against
-`METHOD url` or the argv string), `allow_g3: true` anywhere (also
-accepted: `g3:` / `destructive_shell:` with `true|yes|allowed|g3`), a
-`## harmless_allow` section (`- "class:qualifier"` items per Harmless
-Mode above), and `## workspace` (`- "/path"` items, also `workspace:
-"/path"`) naming the approved filesystem roots for `file_write_delete`.
+Policy-derived `.md` manifests use the scope-parser schema verbatim
+(parsed by `wrap.parse_manifest`, so `authorized_assets` /
+`hard_denylist` / `rate_limits.rps_cap` behave identically). Guardian
+adds one tightening-only extension: a `## forbidden_actions` section
+(`- "substring"` items matched against `METHOD url` or the argv string).
 
-`.json` manifests mirror the same sections:
+A policy page is target-controlled content, so a policy-derived manifest
+can declare scope and tighter limits only. `workspace`,
+`harmless_allow`, `allow_g3`, `g3`, and `destructive_shell` are invalid
+there in every form. Unknown keys and sections are invalid too: the load
+fails closed with `manifest_unreadable` rather than silently ignoring a
+typo or a control-plane injection. `.json` manifests mirror the same
+scope sections and validation:
 
 ```json
 {"authorized_assets": [{"asset": "*.example.com"},
                        {"asset": "map.example.com", "eligible_for_bounty": false}],
  "hard_denylist": ["status.example.com"],
  "forbidden_actions": ["wp-admin"],
- "harmless_allow": ["file_write_delete:/tmp/uploads"],
- "workspace": ["/tmp/work"],
- "rate_limits": {"rps_cap": 5},
- "allow_g3": false}
+ "rate_limits": {"rps_cap": 5}}
 ```
+
+## Operator overrides
+
+Local gate-loosening exceptions live only in
+`memory/operator-overrides.md` (override the path with
+`--operator-overrides` for direct CLI use). The operator writes this
+file by hand; it is never extracted, generated, or copied from fetched
+content. If the file is absent, no loosening exists. Canonical form:
+
+```markdown
+# Operator overrides — local, hand-written
+
+## workspace
+- "/tmp/t2d-work"
+
+## harmless_allow
+- "file_write_delete:/tmp/t2d-work"
+
+## g3
+allow_g3: true
+```
+
+`workspace` roots must be absolute. `harmless_allow` entries use the
+`class` / `class:qualifier` grammar above. `g3` accepts one boolean key:
+`allow_g3`, `g3`, or `destructive_shell` (the key names differ, the
+meaning is the same). Single-line `workspace: "/path"` and
+`harmless_allow: "class:qualifier"` spellings are also accepted, but
+unknown keys, duplicate G3 keys, malformed lines, and out-of-section
+entries fail closed.
+
+Hard invariant: G3 permission lowers destructive shell/payload shapes
+only from `deny` to `escalate`. Nothing in either file can make them
+`allow`; a value such as `destructive_shell: allow` is rejected.
 
 ## Integration point
 
@@ -150,8 +184,10 @@ plumbing stay out of the action — they are repo files, not targets.
 Manifest resolution follows the path wrap.py's `--manifest` takes: an
 explicit `manifest` argument wins, then `T2D_MANIFEST`, then a single
 engaged program discovered at `memory/targets/<program>/roe-manifest.*`
-(zero or several is unresolvable). `.md` manifests parse through
-`wrap.parse_manifest`, unchanged.
+(zero or several is unresolvable). `.md` scope fields still parse through
+`wrap.parse_manifest`; guardian then applies the trust-split validation
+and reads only `memory/operator-overrides.md` under the same root for
+local exceptions.
 
 Verdict semantics at the dispatch boundary:
 

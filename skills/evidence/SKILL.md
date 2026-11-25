@@ -23,6 +23,9 @@ Every finding must carry all five:
 4. **Scope citation** — the manifest line covering this asset + bug class.
 5. **Timestamps** — UTC ISO-8601 on every file.
 
+"Verbatim" describes the evidence-store record, not permission to load raw
+bytes into model context. Retrieval is governed by scan-at-read below.
+
 ## Directory format
 
 One directory per finding:
@@ -93,6 +96,17 @@ Status: CONFIRMED   # CONFIRMED = path traced end to end; SUSPECTED =
 - `notes.md` is a dated log, newest entries at the bottom.
 - A corrected capture is a new file (`request-2.txt`, `response-2.txt`)
   plus a `notes.md` line explaining why. Never overwrite.
+
+## Scan-at-read
+
+Append-once storage preserves the record; it does not make the record safe
+to re-enter a model. Any worker retrieving stored raw traces or evidence
+MUST re-pipe the content through `tools/content-scan/scan.py` before it
+enters model context. The default handoff to the planner or another worker
+is sanitized excerpts plus provenance labels (evidence path, hash, capture
+time, verdict, hit ids). Full raw logs stay in the evidence store and are
+never exposed through planner/worker memory APIs by default;
+operator-approved inspection of raw bytes happens outside model memory.
 
 ## Deterministic evidence hashing
 

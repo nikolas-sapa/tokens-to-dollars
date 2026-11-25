@@ -19,3 +19,4 @@ docs/self-audit-*.md
 docs/dogfood-*.md
 .git-rewrite/
 tools/analytics-receiver/wrangler.toml
+.wrangler/

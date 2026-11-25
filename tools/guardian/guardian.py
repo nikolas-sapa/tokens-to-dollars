@@ -10,9 +10,10 @@ the action cannot.
 Beyond scope gating, Harmless Mode adjudicates the action CLASS
 (VenusTech/Ethiack pattern): six high-risk shapes — file_write_delete,
 tunneling, dos_shaped, persistence, brute_force, destructive_request —
-are denied or escalated even when the target is authorized. A manifest
-may allow-list entries per program via harmless_allow (e.g.
-"file_write_delete:/uploads/" on a file-upload scope).
+are denied or escalated even when the target is authorized. Only the
+hand-written operator override file may allow-list exceptions (e.g.
+"file_write_delete:/uploads/" on a file-upload scope); a policy-derived
+manifest can tighten scope but never loosen these local gates.
 
 Shell actions are unpacked before adjudication: -c bodies, heredocs,
 base64 blobs, and piped scripts are classified on their CONTENT, not
@@ -26,7 +27,7 @@ secret material does not land in the durable log.
 
   python3 guardian.py --manifest <roe-manifest.md|json>
                       (--action-file action.json | --stdin) [--json]
-                      [--log PATH] [--no-log]
+                      [--operator-overrides PATH] [--log PATH] [--no-log]
 
 action.json shapes:
   {"type": "http",  "method": "GET", "url": "https://h/x",
@@ -86,8 +87,9 @@ def _load_audit():
 
 
 audit_log = _load_audit()
-_DEFAULT_LOG = str(Path(__file__).resolve().parents[2]
-                   / "memory" / "audit.jsonl")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_LOG = str(_REPO_ROOT / "memory" / "audit.jsonl")
+_DEFAULT_OVERRIDES = str(_REPO_ROOT / "memory" / "operator-overrides.md")
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 MUTATING_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
@@ -114,7 +116,7 @@ SHRED_RE = re.compile(r"\bshred\b")
 # ── Harmless Mode — high-risk action taxonomy ─────────────────────────
 # Scope gating decides WHERE an action may land; these classes decide
 # WHAT the action is. Deny classes are never hunting actions; escalate
-# classes have legitimate uses the manifest or a human must bless.
+# classes have legitimate uses the operator or a human must bless.
 AUTH_ATTEMPT_CAP = 5   # declared credential tries before it stuffs
 DOS_RATE_FLOOR = 50    # declared rps that is a flood on any program
 DOS_CAP_MULT = 10      # rps this multiple over rps_cap is a flood
@@ -179,13 +181,13 @@ AUTH_PATH_RE = re.compile(
 
 # Destructive requests: mutating verbs on collection/bulk/account paths
 # deny; bare DELETE/PUT elsewhere escalates unless the endpoint is
-# manifest-marked via harmless_allow.
+# operator-marked via harmless_allow.
 MASS_PATH_RE = re.compile(
     r"/(?:bulk|batch|mass)[-_/.]|/(?:users?|accounts?|members?|admins?"
     r"|administrators?|tenants?|teams?|organizations?|orgs?|subscribers?"
     r"|customers?|employees?|groups?|roles?)(?:[/?#.]|$)", re.I)
 
-# File writes/deletes outside the approved workspace (manifest
+# File writes/deletes outside the approved workspace (operator-overrides
 # `workspace` roots only): deletes deny, writes escalate. A caller-chosen
 # cwd outside those roots is itself untrusted.
 DEL_OPS = {"rm", "unlink", "rmdir", "srm", "wipe", "shred", "truncate"}
@@ -212,45 +214,384 @@ BODY_DESTRUCTIVE_RE = re.compile(
     r"\brm\b\s+(?:-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])[a-zA-Z]*"
     r"|\bmkfs(?:\.[a-z0-9]+)?\b|\bshred\b|:\(\)\s*\{[^}]*:\s*\|\s*:")
 
+# Trust split: a policy-derived roe-manifest may tighten scope, never loosen
+# local execution gates. These keys are valid only in the hand-written
+# operator override file.
+LOOSENING_KEYS = {"workspace", "harmless_allow", "allow_g3", "g3",
+                  "destructive_shell"}
+HARMLESS_CLASSES = {"persistence", "tunneling", "dos_shaped", "brute_force",
+                    "file_write_delete", "destructive_request"}
+
+POLICY_SECTIONS = {"identity", "authorized_assets", "hard_denylist",
+                   "prohibited_methods", "automation_policy", "rate_limits",
+                   "safe_harbor", "enforcement", "unknowns",
+                   "forbidden_actions"}
+POLICY_KEYS = {
+    "platform", "program", "policy_url", "url", "fetched_at", "policy_hash",
+    "contact", "email", "source", "securitytxt", "encryption", "languages",
+    "session", "session_slot", "asset", "type", "eligible_for_bounty",
+    "pattern", "method", "blocks", "ceiling", "ai_output", "ai_disclosure",
+    "submitter", "rps_cap", "test_accounts", "submission_cost", "notes",
+    "status", "disclosure", "embargo_days", "signal_gate",
+    "submission_throttle", "idv_required", "trial_quota"}
+POLICY_ITEM_KEYS = {
+    "authorized_assets": {"asset", "type", "eligible_for_bounty"},
+    "hard_denylist": {"pattern"},
+    "prohibited_methods": {"method", "blocks", "ceiling"}}
+POLICY_JSON_KEYS = {"identity", "authorized_assets", "hard_denylist",
+                    "prohibited_methods", "automation_policy", "rate_limits",
+                    "safe_harbor", "enforcement", "unknowns",
+                    "forbidden_actions"}
+POLICY_JSON_OBJECT_KEYS = {
+    "identity": {"platform", "program", "policy_url", "fetched_at",
+                 "policy_hash", "contact", "session", "session_slot"},
+    "automation_policy": {"ai_output", "ai_disclosure", "submitter"},
+    "rate_limits": {"rps_cap", "test_accounts", "submission_cost", "notes"},
+    "safe_harbor": {"status", "disclosure", "embargo_days"},
+    "enforcement": {"signal_gate", "submission_throttle", "idv_required",
+                    "trial_quota"}}
+POLICY_JSON_LISTS = {"authorized_assets", "hard_denylist",
+                     "prohibited_methods", "unknowns", "forbidden_actions"}
+CONTACT_KEYS = {"email", "source", "securitytxt", "encryption", "languages"}
+
+OPERATOR_SECTIONS = {"workspace", "harmless_allow", "g3"}
+OPERATOR_G3_KEYS = {"allow_g3", "g3", "destructive_shell"}
+G3_TRUE = {"1", "true", "yes", "on"}
+G3_FALSE = {"0", "false", "no", "off"}
+
+KEY_LINE_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_-]*)\s*:")
+INLINE_KEY_RE = re.compile(r"(?:^|\s)([A-Za-z][A-Za-z0-9_-]*)\s*:(?!/)")
+QUOTED_RE = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'")
+HEADING_RE = re.compile(r"^(#{2,})\s*(.*)$")
+
+
+def _md_heading(line):
+    m = HEADING_RE.match(line)
+    return (len(m.group(1)), m.group(2).strip()) if m else None
+
 
 def verdict(v, rule, reason):
     return {"verdict": v, "rule": rule, "reason": reason}
 
 
-def load_manifest(path):
-    """Normalize a roe-manifest into {authorized, denied, forbidden,
-    rps_cap, allow_g3}. .md goes through wrap.parse_manifest plus a pass
-    for guardian-only keys; .json mirrors the same sections. Any read or
-    parse failure propagates — the caller fails closed."""
+def _schema_error(path, lineno, msg):
+    if lineno is None:
+        raise ValueError("%s: %s" % (path, msg))
+    raise ValueError("%s:%d: %s" % (path, lineno, msg))
+
+
+def _operator_key_error(path, lineno, key):
+    _schema_error(path, lineno,
+                  "operator-only key %r may not appear in a policy-derived "
+                  "manifest" % key)
+
+
+def _md_value(line, bullet=False):
+    q = re.search(r'"([^"]*)"', line)
+    if q:
+        return q.group(1).strip()
+    s = line[2:] if bullet else line.split(":", 1)[1]
+    return s.split("#", 1)[0].strip().strip("'").strip('"')
+
+
+def _strip_unquoted_comment(s):
+    out = []
+    quote = None
+    esc = False
+    for ch in s:
+        if esc:
+            out.append(ch)
+            esc = False
+            continue
+        if quote and ch == "\\":
+            out.append(ch)
+            esc = True
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            out.append(ch)
+            continue
+        if ch in ("\"", "'"):
+            quote = ch
+            out.append(ch)
+        elif ch == "#":
+            break
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _strict_md_value(line, path, lineno, bullet=False):
+    """One scalar and nothing else; operator files fail closed on trailing
+    tokens that the forgiving manifest reader would have discarded."""
+    s = line[2:] if bullet else line.split(":", 1)[1]
+    s = _strip_unquoted_comment(s).strip()
+    if not s:
+        return ""
+    if s[0] in ("\"", "'"):
+        m = re.fullmatch(r'"((?:[^"\\]|\\.)*)"|\'((?:[^\'\\]|\\.)*)\'', s)
+        if not m:
+            _schema_error(path, lineno, "malformed quoted scalar")
+        return (m.group(1) if m.group(1) is not None else m.group(2)).strip()
+    return s
+
+
+def _validate_policy_markdown(text, path):
+    """Reject operator-only and unknown schema keys in policy-derived
+    markdown. Quoted bullet text is data, so it is stripped before the
+    inline-key scan; plaintext prose without a key shape stays inert."""
+    sec = None
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        heading = _md_heading(line)
+        if heading:
+            level, head = heading
+            sec = head.split()[0].lower() if head else ""
+            if level != 2 or not sec:
+                _schema_error(path, lineno,
+                              "malformed manifest section heading")
+            if sec in LOOSENING_KEYS:
+                _operator_key_error(path, lineno, sec)
+            if sec not in POLICY_SECTIONS:
+                _schema_error(path, lineno,
+                              "unknown manifest section %r" % sec)
+            continue
+        if line.startswith("#"):
+            continue
+        m = KEY_LINE_RE.match(line)
+        if m:
+            key = m.group(1).lower()
+            if key in LOOSENING_KEYS:
+                _operator_key_error(path, lineno, key)
+            if key not in POLICY_KEYS:
+                _schema_error(path, lineno, "unknown manifest key %r" % key)
+            continue
+        if not line.startswith("- "):
+            continue
+        scan = QUOTED_RE.sub('""', line).split("#", 1)[0]
+        for key in [k.lower() for k in INLINE_KEY_RE.findall(scan)]:
+            if key in LOOSENING_KEYS:
+                _operator_key_error(path, lineno, key)
+            if key not in POLICY_KEYS:
+                _schema_error(path, lineno,
+                              "unknown manifest item key %r" % key)
+            allowed = POLICY_ITEM_KEYS.get(sec)
+            if allowed is not None and key not in allowed:
+                _schema_error(path, lineno,
+                              "unknown %s item key %r" % (sec, key))
+
+
+def _json_object_keys(obj):
+    if isinstance(obj, dict):
+        for key, val in obj.items():
+            yield key
+            yield from _json_object_keys(val)
+    elif isinstance(obj, list):
+        for val in obj:
+            yield from _json_object_keys(val)
+
+
+def _unknown_json_keys(obj, allowed, what, path):
+    extra = sorted(set(obj) - allowed)
+    if extra:
+        _schema_error(path, None, "unknown %s key(s): %s"
+                      % (what, ", ".join(extra)))
+
+
+def _validate_json_list(value, name, path):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        _schema_error(path, None, "%s must be a list" % name)
+    return value
+
+
+def _validate_policy_json(m, path):
+    if not isinstance(m, dict):
+        _schema_error(path, None, "manifest root must be an object")
+    for key in _json_object_keys(m):
+        if str(key).lower() in LOOSENING_KEYS:
+            _operator_key_error(path, None, key)
+    _unknown_json_keys(m, POLICY_JSON_KEYS, "manifest", path)
+
+    for name, allowed in POLICY_JSON_OBJECT_KEYS.items():
+        obj = m.get(name)
+        if obj is None:
+            continue
+        if not isinstance(obj, dict):
+            _schema_error(path, None, "%s must be an object" % name)
+        _unknown_json_keys(obj, allowed, name, path)
+    identity = m.get("identity") or {}
+    contact = identity.get("contact") if isinstance(identity, dict) else None
+    if contact is not None:
+        if not isinstance(contact, dict):
+            _schema_error(path, None, "identity.contact must be an object")
+        _unknown_json_keys(contact, CONTACT_KEYS, "identity.contact", path)
+
+    for name in POLICY_JSON_LISTS:
+        _validate_json_list(m.get(name), name, path)
+    for item in m.get("authorized_assets") or []:
+        if isinstance(item, str):
+            continue
+        if not isinstance(item, dict):
+            _schema_error(path, None,
+                          "authorized_assets items must be strings or objects")
+        _unknown_json_keys(item, {"asset", "type", "eligible_for_bounty"},
+                           "authorized_assets item", path)
+        if not isinstance(item.get("asset"), str):
+            _schema_error(path, None,
+                          "authorized_assets item asset must be a string")
+    for item in m.get("hard_denylist") or []:
+        if isinstance(item, str):
+            continue
+        if not isinstance(item, dict):
+            _schema_error(path, None,
+                          "hard_denylist items must be strings or objects")
+        _unknown_json_keys(item, {"pattern"}, "hard_denylist item", path)
+        if not isinstance(item.get("pattern"), str):
+            _schema_error(path, None,
+                          "hard_denylist item pattern must be a string")
+    for item in m.get("prohibited_methods") or []:
+        if not isinstance(item, dict):
+            _schema_error(path, None,
+                          "prohibited_methods items must be objects")
+        _unknown_json_keys(item, {"method", "blocks", "ceiling"},
+                           "prohibited_methods item", path)
+    for name in ("unknowns", "forbidden_actions"):
+        if any(not isinstance(x, str) for x in m.get(name) or []):
+            _schema_error(path, None, "%s items must be strings" % name)
+    rps = (m.get("rate_limits") or {}).get("rps_cap")
+    if rps is not None:
+        try:
+            rps_n = float(rps)
+        except (TypeError, ValueError):
+            rps_n = None
+        if isinstance(rps, bool) or rps_n is None \
+                or not math.isfinite(rps_n) or rps_n < 0:
+            _schema_error(path, None,
+                          "rate_limits.rps_cap must be null or a finite "
+                          "number >= 0")
+
+
+def load_operator_overrides(path=None):
+    """Load the hand-written local override file. Absence means no
+    loosening. The format is deliberately small and strict: workspace /
+    harmless_allow entries plus one G3 boolean; unknown keys fail closed."""
+    out = {"harmless_allow": [], "workspace": [], "allow_g3": False}
+    path = _DEFAULT_OVERRIDES if path is None else path
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return out
+    sec = None
+    g3_seen = False
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        heading = _md_heading(line)
+        if heading:
+            level, head = heading
+            sec = head.split()[0].lower() if head else ""
+            if level != 2 or not sec:
+                _schema_error(path, lineno,
+                              "malformed operator-overrides section heading")
+            if sec not in OPERATOR_SECTIONS:
+                _schema_error(path, lineno,
+                              "unknown operator-overrides section %r" % sec)
+            continue
+        if line.startswith("#"):
+            continue
+        if line.startswith("- "):
+            if sec not in ("workspace", "harmless_allow"):
+                _schema_error(path, lineno,
+                              "override entries require a workspace or "
+                              "harmless_allow section")
+            val = _strict_md_value(line, path, lineno, bullet=True)
+            if not val:
+                _schema_error(path, lineno, "empty %s entry" % sec)
+            out[sec].append(val)
+            continue
+        m = KEY_LINE_RE.match(line)
+        if not m:
+            _schema_error(path, lineno,
+                          "unparseable operator-overrides line")
+        key = m.group(1).lower()
+        if key in ("workspace", "harmless_allow"):
+            if sec not in (None, key):
+                _schema_error(path, lineno,
+                              "%s key outside its operator-overrides section"
+                              % key)
+            val = _strict_md_value(line, path, lineno)
+            if not val:
+                _schema_error(path, lineno, "empty %s value" % key)
+            out[key].append(val)
+        elif key in OPERATOR_G3_KEYS:
+            if sec not in (None, "g3"):
+                _schema_error(path, lineno,
+                              "%s key outside the g3 section" % key)
+            if g3_seen:
+                _schema_error(path, lineno,
+                              "duplicate G3 operator override")
+            g3_seen = True
+            val = _strict_md_value(line, path, lineno).lower()
+            if val in G3_TRUE:
+                out["allow_g3"] = True
+            elif val in G3_FALSE:
+                out["allow_g3"] = False
+            else:
+                _schema_error(path, lineno,
+                              "G3 override must be true or false; destructive "
+                              "shapes can never be allow, only escalate")
+        else:
+            _schema_error(path, lineno,
+                          "unknown operator-overrides key %r" % key)
+    for root in out["workspace"]:
+        if not os.path.isabs(os.path.expanduser(root)):
+            _schema_error(path, None,
+                          "workspace root %r must be absolute" % root)
+    for ent in out["harmless_allow"]:
+        cls = str(ent).partition(":")[0].strip()
+        if cls not in HARMLESS_CLASSES:
+            _schema_error(path, None,
+                          "unknown harmless_allow class %r" % cls)
+    return out
+
+
+def load_policy_manifest(path):
+    """Normalize a policy-derived roe-manifest into scope and tightening
+    data only. Any operator-only loosening key, unknown key, read failure,
+    or parse failure propagates — the caller fails closed."""
     with open(path, encoding="utf-8") as f:
         text = f.read()
     if text.lstrip().startswith("{"):
         m = json.loads(text)
+        _validate_policy_json(m, path)
         auth, deny = [], []
         for a in m.get("authorized_assets") or []:
             if isinstance(a, str):
                 auth.append(a)
-            elif isinstance(a, dict):
-                if a.get("eligible_for_bounty") is False:
-                    deny.append(str(a.get("asset") or ""))
-                else:
-                    auth.append(str(a.get("asset") or ""))
+            elif a.get("eligible_for_bounty") is False:
+                deny.append(a.get("asset") or "")
+            else:
+                auth.append(a.get("asset") or "")
         for d in m.get("hard_denylist") or []:
-            deny.append(str(d.get("pattern") or "" if isinstance(d, dict)
-                            else d))
+            deny.append(d.get("pattern") if isinstance(d, dict) else d)
         rl = m.get("rate_limits") or {}
-        ws = m.get("workspace")
         return {"authorized": [x for x in auth if x],
-                "denied": [x for x in deny if x],
+                "denied": [str(x) for x in deny if x],
                 "forbidden": [str(x) for x in m.get("forbidden_actions") or []],
-                "harmless_allow": [str(x) for x in
-                                   m.get("harmless_allow") or []],
-                "workspace": ([ws] if isinstance(ws, str)
-                              else [str(x) for x in ws or []]),
+                "harmless_allow": [],
+                "workspace": [],
                 "rps_cap": rl.get("rps_cap"),
-                "allow_g3": bool(m.get("allow_g3"))}
+                "allow_g3": False}
+    _validate_policy_markdown(text, path)
     base = wrap.parse_manifest(path)
-    forbidden, g3, allow, ws = [], False, [], []
+    forbidden = []
     sec = None
     for raw in text.splitlines():
         line = raw.strip()
@@ -258,25 +599,24 @@ def load_manifest(path):
             sec = line[3:].strip().split()[0].lower()
             continue
         if sec == "forbidden_actions" and line.startswith("- "):
-            q = re.search(r'"([^"]+)"', line)
-            forbidden.append(q.group(1) if q
-                             else line[2:].split("#")[0].strip())
-        elif sec in ("harmless_allow", "workspace") \
-                and line.startswith("- "):
-            q = re.search(r'"([^"]+)"', line)
-            (allow if sec == "harmless_allow" else ws).append(
-                q.group(1) if q else line[2:].split("#")[0].strip())
-        elif re.match(r"(?i)workspace\s*:", line):
-            q = re.search(r'"([^"]+)"', line)
-            ws.append(q.group(1) if q else line.split(":", 1)[1].strip())
-        elif re.match(r"(?i)(allow_g3|g3|destructive_shell)\s*:"
-                      r"\s*(true|yes|allowed|g3)\b", line):
-            g3 = True
+            forbidden.append(_md_value(line, bullet=True))
     return {"authorized": base["authorized"], "denied": base["denied"],
             "forbidden": [x for x in forbidden if x],
-            "harmless_allow": [x for x in allow if x],
-            "workspace": [x for x in ws if x],
-            "rps_cap": base["rps_cap"], "allow_g3": g3}
+            "harmless_allow": [],
+            "workspace": [],
+            "rps_cap": base["rps_cap"], "allow_g3": False}
+
+
+def load_manifest(path, overrides_path=None):
+    """Load the policy manifest, then apply gate-loosening exceptions from
+    the separate hand-written operator override file only. The policy file
+    can tighten scope; it can never widen workspace, harm classes, or G3."""
+    mf = load_policy_manifest(path)
+    ov = load_operator_overrides(overrides_path)
+    mf["harmless_allow"] = ov["harmless_allow"]
+    mf["workspace"] = ov["workspace"]
+    mf["allow_g3"] = ov["allow_g3"]
+    return mf
 
 
 def scope_of(host, manifest):
@@ -318,6 +658,15 @@ def destructive_argv(argv):
             if recursive and force:
                 return "rm-rf"
     return None
+
+
+def g3_floor_verdict(shape, payload=False):
+    """Hard invariant: even explicit operator G3 approval lowers a
+    destructive shape only from deny to escalate — never to allow."""
+    rule = "payload_g3_destructive" if payload else "g3_destructive"
+    return verdict("escalate", rule,
+                   "destructive shape %r permitted by operator G3; "
+                   "confirm before dispatch" % shape)
 
 
 def argv_hosts(argv):
@@ -769,10 +1118,12 @@ def judge_payload(body, a, mf):
     classes argv faces — the fix for the fail-open judge that saw only
     argv. A wrapped `rm -rf` must verdict like a bare one."""
     m = BODY_DESTRUCTIVE_RE.search(body)
-    if m and not mf["allow_g3"]:
-        return verdict("deny", "destructive_payload",
-                       "embedded payload has destructive shape %r"
-                       % m.group(0))
+    if m:
+        if not mf["allow_g3"]:
+            return verdict("deny", "destructive_payload",
+                           "embedded payload has destructive shape %r"
+                           % m.group(0))
+        return g3_floor_verdict(m.group(0), payload=True)
     try:
         sub = shlex.split(body)
     except ValueError:
@@ -781,9 +1132,11 @@ def judge_payload(body, a, mf):
         return verdict("escalate", "opaque_payload",
                        "unparseable payload body cannot be classified")
     killer = destructive_argv(sub)
-    if killer and not mf["allow_g3"]:
-        return verdict("deny", "destructive_payload",
-                       "embedded payload has destructive shape %r" % killer)
+    if killer:
+        if not mf["allow_g3"]:
+            return verdict("deny", "destructive_payload",
+                           "embedded payload has destructive shape %r" % killer)
+        return g3_floor_verdict(killer, payload=True)
     hv = harmless_shell(a, sub, mf)
     if hv:
         return verdict(hv["verdict"], "payload_" + hv["rule"], hv["reason"])
@@ -879,8 +1232,8 @@ def judge_shell(a, mf):
     killer = destructive_argv(argv)
     if killer and not mf["allow_g3"]:
         return verdict("deny", "destructive_shell",
-                       "destructive shape %r; manifest does not allow G3"
-                       % killer)
+                       "destructive shape %r; operator overrides do not "
+                       "permit G3" % killer)
     bodies, opaque = payload_bodies(argv)
     hits = [v for v in (judge_payload(b, a, mf) for b in bodies) if v]
     deny_hit = next((v for v in hits if v["verdict"] == "deny"), None)
@@ -913,10 +1266,8 @@ def judge_shell(a, mf):
     hv = harmless_shell(a, argv, mf)
     if hv:
         return hv
-    if killer:  # destructive but manifest opted into G3: still never silent
-        return verdict("escalate", "g3_destructive",
-                       "destructive shape %r permitted by manifest G3; "
-                       "confirm before dispatch" % killer)
+    if killer:  # operator G3 approval has a hard floor: escalate, never allow
+        return g3_floor_verdict(killer)
     if cands:
         return verdict("allow", "in_scope_argv",
                        "all argv hosts authorized: %s"
@@ -941,6 +1292,9 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="guardian.py")
     ap.add_argument("--manifest", required=True,
                     help="roe-manifest (.md from skills/scope-parser, or .json)")
+    ap.add_argument("--operator-overrides", default=_DEFAULT_OVERRIDES,
+                    help="hand-written operator override file "
+                         "(default: %(default)s)")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--action-file", help="action JSON to adjudicate")
     src.add_argument("--stdin", action="store_true",
@@ -960,10 +1314,13 @@ def main(argv):
         return emit(v, a)
 
     try:
-        mf = load_manifest(a.manifest)
+        mf = load_manifest(a.manifest, a.operator_overrides)
     except (OSError, ValueError, KeyError) as e:
+        print("guardian: cannot load manifest/operator overrides: %s" % e,
+              file=sys.stderr)
         v = verdict("deny", "manifest_unreadable",
-                    "cannot load manifest %s: %s" % (a.manifest, e))
+                    "cannot load manifest/operator overrides %s: %s"
+                    % (a.manifest, e))
         return emit(v, a)
 
     text = None

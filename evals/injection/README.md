@@ -18,11 +18,19 @@ can ship data to an attacker host on render. A fixture is
 `{id, channel, payload, expected_verdict, notes}` — add a JSON file and it
 runs. Optional fields tighten the assertion: `expected_rules` (subset of
 rule ids that must fire), `sanitize_removes` (substring that must be
-absent from `--sanitize` output), and `check: "scope"` — a
+absent from `--sanitize` output), `expect_absent_after_sanitize` (string
+or list of strings that must all be absent after sanitization — the
+round-trip assertion for normalized-only hits), and `check: "scope"` — a
 manifest-as-authority test where the fixture carries `scope:
 {authorized, denied}` plus `expect_scope: {host: label}` and every listed
 host must resolve to its declared `scope_of` label (a URL in content is
 a lead, never an asset — the 360 Tulongfeng slip).
+
+Files prefixed `x-quarantined-` are externally discovered bypass
+regressions. They are kept as regression coverage, not as proof that the
+corpus is comprehensive: the current case is the operational-metadata
+manifest-manipulation payload from `docs/self-audit-sec2.md`, which
+scanned clean before `inj-manifest-control-write` was added.
 
 ## Metrics
 

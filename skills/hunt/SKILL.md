@@ -120,6 +120,7 @@ compound validity AND bounty size).
 ## Standing rules for all playbooks
 
 - **Scope gate before any probe.** Techniques run only against manifest targets, entitled labs, or programs whose written policy permits them. Discovery never grants permission.
+- **Target-repo execution gate.** Static analysis is the default. Building or running target-controlled repository code is prohibited unless every gate is satisfied: explicit operator approval for the engagement, a disposable container/VM with no host credentials and no host memory mounts, a pinned commit, and pre-execution inspection of build config/scripts with `ffi`, `eval`, dynamic code loading, and equivalent primitives disabled or stripped. One missing gate means static analysis only.
 - **Stop at proof.** Demonstrate the minimal security consequence, then stop exploiting that weakness.
 - **Demonstrated versus plausible, in writing.** Separate what the evidence shows from model-dependent or unexercised chain links; classify each per the outcome classes in `references/verification.md`.
 - **Program-scope proof accompanies technique evidence.** Credential-, concurrency-, and auth-bypass-class reports must carry the program-policy line that permits the technique, or they fail triage.

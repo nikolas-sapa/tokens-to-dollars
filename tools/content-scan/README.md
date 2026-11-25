@@ -26,24 +26,35 @@ Capability hits are awareness for the planner, not an alarm — a JS bundle
 that merely *mentions* `fetch url` stays clean.
 
 `--sanitize` prints the content with zero-width/bidi characters stripped
-and every literal rule match wrapped in `[REDACTED-<rule>]...[/REDACTED]`
-markers (nested where rules overlap). Verdict + hit count go to stderr;
-exit code still reflects the verdict. Sanitized copy is for the planner —
-the untouched original goes to the evidence dir.
+and every rule match excised to a `[removed:<rule>]` marker. Folded or
+confusable-only hits are mapped back to their source spans; if one cannot
+be mapped, or a non-info hit survives the rewrite, output fails closed as
+an `[unsafe: ...]` marker instead of emitting the instruction. Verdict +
+hit count go to stderr; exit code still reflects the verdict. Sanitized
+copy is for the planner — the untouched original goes to the evidence dir.
+With `--egress --sanitize`, outbound privacy/exfil matches are excised by
+the same fail-closed rule.
 
 ## Egress mode
 
 `--egress` flips direction: the input is agent-generated output (report
 drafts, markdown, URLs quoted in findings) instead of fetched content.
 The full signature pass still runs — injected text can survive a draft —
-plus four egress-only rules:
+plus egress-only privacy and exfil-channel rules:
 
 | rule | sev | catches |
 |---|---|---|
 | `egress-external-image` | high | `![alt](https://…)` fetching a host outside `EGRESS_HOST_ALLOWLIST` (EchoLeak exfil channel) |
 | `egress-external-image-ref` | high | `![alt][ref]` whose `[ref]:` target is external or unresolved |
-| `egress-autofetch-tag` | high | `<img>/<iframe>/<script>/<link src|href="https://…">` — fetches on render |
+| `egress-autofetch-tag` | high | auto-fetch tags/attributes loading remote URLs: `src`, `href`, `srcset`, `poster`, SVG image embedding, `background` |
+| `egress-css-url` | high | CSS `url(https://…)` fetches |
+| `egress-meta-refresh` | high | `<meta http-equiv="refresh" … url=https://…>` navigation/fetch |
 | `egress-url-blob` | high | 80+ char base64/hex token inside a URL (data smuggling) |
+| `egress-cookie-header` | high | `Cookie`/`Set-Cookie` header material |
+| `egress-authorization-header` | high | `Authorization: Bearer/Basic/token` credentials |
+| `egress-jwt-token` | high | JWT-shaped base64url triplets |
+| `egress-local-home-path` | high | absolute `/Users/…` or `/home/…` paths |
+| `egress-rfc1918-ip` | high | RFC1918 internal IP addresses |
 
 Relative and allowlisted targets pass. Same verdict enum and exit codes —
 run it on every markdown artifact before it leaves the workspace.
@@ -78,6 +89,8 @@ labels, human-hint verification.
 | `inj-hidden-markup` | critical | toolfence checks/index.ts | `<system>`, `<secret>`, `[[system`, `<!-- inject` |
 | `inj-user-concealment` | critical | toolfence checks/index.ts | "do not tell/inform the user" |
 | `inj-coercive-preinstruction` | critical | toolfence checks/index.ts | "before using this tool, you must…" |
+| `inj-manifest-control-write` | critical | local exploit-chain regression | imperative write/copy/add targeting `roe-manifest`, `harmless_allow`, `workspace`, or `allow_g3` |
+| `inj-self-concealment` | critical | local exploit-chain regression | "do not quote/mention this note…" directed at human/operator/reviewer summaries |
 | `grip-role-prefix` | high | grip injection.py | line/sentence-anchored `System:`/`Assistant:`/`User:` |
 | `grip-ignore-instructions` | critical | grip injection.py | bare "ignore instructions" (no "previous" needed) |
 | `grip-forget-instructions` | critical | grip injection.py | "forget (your) instructions" |
