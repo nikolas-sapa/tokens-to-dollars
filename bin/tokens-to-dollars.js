@@ -25,6 +25,11 @@ const http = require("http");
 const https = require("https");
 const { spawnSync } = require("child_process");
 
+// Built-in default receiver for opt-in events. Users can override with
+// analytics.endpoint in the config, or set endpoint to "local" to keep
+// events on-machine even when analytics is enabled.
+const DEFAULT_ENDPOINT = "https://t2d-analytics.nikolas-sapalidis.workers.dev/ingest";
+
 const ROOT = path.resolve(__dirname, "..");
 const HOME = os.homedir();
 const CWD = process.cwd();
@@ -162,8 +167,10 @@ function emitOnce() {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
     fs.appendFileSync(STATS_FILE, JSON.stringify(evt) + "\n", { mode: 0o600 });
   } catch {}
-  if (a.enabled && a.endpoint) {
-    try { postEvent(a.endpoint, evt); } catch {}
+  const endpoint = typeof a.endpoint === "string" && a.endpoint
+    ? a.endpoint : DEFAULT_ENDPOINT;
+  if (a.enabled && endpoint !== "local") {
+    try { postEvent(endpoint, evt); } catch {}
   }
 }
 
@@ -204,7 +211,8 @@ function analyticsCmd(sub) {
   } else if (!sub || sub === "status") {
     if (created) saveConfig(cfg);
     console.log(`analytics: ${a.enabled ? "on" : "off"}`);
-    console.log(`endpoint:   ${a.endpoint || "(none)"}`);
+    const eff = typeof a.endpoint === "string" && a.endpoint ? a.endpoint : DEFAULT_ENDPOINT;
+    console.log(`endpoint:   ${eff}${a.endpoint ? "" : " (built-in default)"}`);
     console.log(`install_id: ${a.install_id}`);
     console.log(`stats:      ${STATS_FILE}`);
   } else {

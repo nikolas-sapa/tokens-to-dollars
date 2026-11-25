@@ -1,6 +1,6 @@
 {
   "name": "tokens-to-dollars",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Turn LLM token spend into validated, submission-ready bug bounty reports. Harness-agnostic skill-pack + CLI: playbooks, scope/RoE enforcement, dedupe, evidence gates, bounty-radar.",
   "license": "Apache-2.0",
   "repository": {

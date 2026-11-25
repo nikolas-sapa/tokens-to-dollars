@@ -1,8 +1,10 @@
 # Privacy
 
-tokens-to-dollars is local-first. It sends nothing to the project's
-authors by default — usage analytics are **opt-in** (`t2d analytics on`),
-and the CLI ships with no endpoint configured.
+tokens-to-dollars is local-first. Usage analytics are **opt-in**
+(`t2d analytics on`); nothing is POSTed anywhere while analytics are off.
+When you opt in, events go to the project's reference receiver by
+default — you can point them at your own endpoint or keep them fully
+local instead (see below).
 
 ## What stays on your machine
 
@@ -44,11 +46,19 @@ Each `t2d` invocation records exactly one event — the strict allowlist:
   values, paths, env vars, tool output, findings — nothing outside the
   allowlist above.
 - Every event appends to `~/.config/tokens-to-dollars/stats.jsonl`
-  regardless of the setting. When analytics is on **and**
-  `analytics.endpoint` in `config.json` is non-empty (default: empty — no
-  endpoint is shipped), the same event is POSTed there as JSON. POSTs are
-  fire-and-forget: ≤3s timeout, no retries, silent on failure, and they
-  never break or delay the CLI beyond that bound.
+  regardless of the setting. When analytics is **on**, the same event is
+  POSTed as JSON to the receiver endpoint. Resolution order:
+  `analytics.endpoint` in `config.json` if non-empty, otherwise the
+  built-in default `https://t2d-analytics.nikolas-sapalidis.workers.dev/ingest`.
+  Set `analytics.endpoint` to your own receiver URL to self-host, or to
+  `"local"` to keep events strictly on-machine even while opted in.
+  POSTs are fire-and-forget: ≤3s timeout, no retries, silent on failure,
+  and they never break or delay the CLI beyond that bound. The reference
+  receiver is a Cloudflare Worker (`tools/analytics-receiver/`, source
+  shipped in this repo) that re-validates the same allowlist server-side
+  and drops everything else, so even a broken client cannot store more
+  than the six public fields; events expire after 400 days and IP
+  addresses are never stored.
 - Inspect what's recorded: `cat ~/.config/tokens-to-dollars/stats.jsonl`
 - To erase: `t2d analytics off` stops any POSTing; delete `stats.jsonl`
   and the `analytics` object in `config.json` to remove the history and
@@ -60,10 +70,10 @@ Only traffic you initiate: the tools fetch public feeds (arkadiyt,
 lissy93, diodb, Immunefi, bbscope, algora, opire, sherlock, crt.sh,
 GitHub API, `/.well-known/security.txt` on program hosts) and, when you
 run a hunt, send requests to in-scope targets plus your LLM provider's
-API. If you opt in to analytics and configure an endpoint yourself, the
-allowlisted event above is also POSTed to that endpoint. Otherwise no
-usage data, identifiers, or findings are transmitted to the project's
-authors — there is no such endpoint.
+API. If you opt in to analytics, the allowlisted event above is POSTed
+to the receiver endpoint (the project's reference receiver by default,
+or your own if you configure one). If analytics are off — the default —
+no usage data, identifiers, or findings are transmitted anywhere.
 
 ## Reports you file
 
