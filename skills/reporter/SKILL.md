@@ -416,6 +416,18 @@ for these before drafting the artifact:
   `To:`, line 2 `Subject:`, then the body — no placeholders, no
   signature block, no internal notes. Verify with a residue grep
   (`[`*#—‖`]`) before presenting.
+- **Form-channel reports (GHSA, web forms) are FIELD-MAPPED copy blocks.**
+  Forms have per-field boxes (GHSA: Title, Summary, Details, Proof of
+  concept, Impact, plus dropdown metadata) — a single linear body forces
+  the human to re-slice by hand. Emit ONE plaintext file with one block
+  per form field, each block delimited exactly as:
+  `===== <FIELD NAME> =====` on its own line, then the bare field text,
+  then a blank line. Never use tables for content the human must copy —
+  tables are for analysis, not submission artifacts. End the file with a
+  `===== FORM METADATA =====` block listing the non-text fields one per
+  line (`severity: High`, `cvss: CVSS:3.1/...`, `cwe: CWE-367`,
+  `ecosystem: Other`, `affected: ...`, `ai-checkbox: YES/NO`) so the
+  human can work top-to-bottom without scrolling back.
 - **Version-pinned scope (Safe-style):** scope lists exact contract/module
   versions — a bug already fixed in a newer released version is excluded.
   Check the deployed/released version against the pinned list before
