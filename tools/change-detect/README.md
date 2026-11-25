@@ -30,13 +30,30 @@ python3 tools/change-detect/detect.py --target memory/targets/acme/change/ \
 # releases.atom / changelog poll: keyword-gated entries -> changelog triggers
 python3 tools/change-detect/detect.py --target memory/targets/acme/change/ \
     poll-feed https://acme.com/releases.atom --only-host acme.com
+
+# read-only on-chain watches (registration never touches the network).
+# nonzero-address and uint-gt need exact eth_call calldata; uint-gt also needs
+# a strict greater-than threshold. slippage-auction-activation knows the
+# SlippageAuction detailsLength()/getLatestAuction() selectors itself.
+python3 tools/change-detect/detect.py --target memory/targets/acme/change/ \
+    add-eth acme-registry-set \
+    --rpc https://ethereum-rpc.publicnode.com --chain-id 1 \
+    --contract 0x0000000000000000000000000000000000000001 \
+    --condition nonzero-address --data 0x28b2362f
+
+# the same check command evaluates URL watches and eth_call watches. every RPC
+# host must still be named in --only-host; chain id is verified before calls.
+python3 tools/change-detect/detect.py --target memory/targets/acme/change/ \
+    check --only-host acme.com --only-host ethereum-rpc.publicnode.com
 ```
 
 ## State layout (`--target <dir>`)
 
 - `state.json` — per-URL `{added, kind, sha256, last_checked, status, etag,
   last_modified, content_type, bytes}` plus `last_run`, `ct_seen` (deduped
-  crt.sh names per domain), and `feeds` (seen entry ids per feed URL).
+  crt.sh names per domain), `feeds` (seen entry ids per feed URL), and
+  `eth_watches` (`{rpc, chain_id, contract, condition, snapshot, status}` per
+  watch name).
 - `bodies/<key>.prev|.cur` — last and current bodies, only with
   `--store-bodies`. `diff` decodes by recorded charset and prints
   `difflib.unified_diff` per changed URL.
@@ -53,6 +70,7 @@ python3 tools/change-detect/detect.py --target memory/targets/acme/change/ \
 | `js`, `schema`, `changelog`, `fingerprint` | `check` on a changed watch | `new-endpoint`, `new-asset-url`, `version-bump`, `new-host`, `content-hash-changed` |
 | `new-subdomain` | `poll-ct` | `ct-log` (+ `priority: high` when a label starts with `api`/`staging`/`admin`/`dev`/`beta`) |
 | `changelog` | `poll-feed` | `keyword:<kw>` — one per matched keyword |
+| `onchain` | `check` on an `eth_watches` edge transition | `address-became-nonzero`, `uint-threshold-crossed`, `slippage-auction-activated` |
 
 Signal → action mapping (orchestrator side):
 
@@ -65,6 +83,7 @@ Signal → action mapping (orchestrator side):
 | `ct-log` / `new-subdomain` | scope-check → alive-probe → register as a watch; `priority: high` jumps the queue |
 | `keyword:<kw>` | read the entry, map the keyword to an attack surface (e.g. `oauth` → auth-flow wave) |
 | `content-hash-changed` | low-confidence wave — emitted only for non-`generic` kinds when no stored body exists to diff; use `--store-bodies` for the precise gate |
+| `address-became-nonzero` / `uint-threshold-crossed` / `slippage-auction-activated` | wake the chain-specific revisit intent named by `watch`; evidence carries previous/current snapshots |
 
 ## Don't-wake gate
 
@@ -87,6 +106,13 @@ dedupes against `state.json`, and bumps priority when a label starts with
 `auth|payment|admin|token|session|oauth|upload|billing|permission` in
 title+summary.
 
+On-chain watches are edge-triggered, not level-triggered: the first check is
+a baseline and never fires; later checks fire once when the condition crosses
+false→true. `slippage-auction-activation` also fires when `detailsLength`
+increases, which catches an auction that started and stopped inside one polling
+interval. The raw value may drift while the boolean condition stays unchanged;
+that updates the stored snapshot without waking the orchestrator.
+
 ## Results and gating
 
 Per URL: `baseline` (first fetch), `unchanged`, `changed`, `error`. Errors
@@ -97,5 +123,7 @@ and `poll-feed` refuse to run without `--only-host`, match exact hosts only,
 and the redirect handler refuses hops to non-allowlisted hosts —
 authorization never propagates through redirects. `poll-ct` names the queried
 domain in `--only-host` and pins the fetch host to `crt.sh`. There is no
-retry storm: one HEAD + one GET per watch per run (one GET per poll), 30s
-timeouts, sequential.
+retry storm: one HEAD + one GET per URL watch per run (one GET per poll), one
+`eth_chainId` per RPC endpoint plus one or two read-only `eth_call` POSTs per
+on-chain watch, 30s timeouts, sequential. On-chain monitoring never sends a
+transaction and needs no account or key.
