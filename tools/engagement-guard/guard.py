@@ -77,7 +77,7 @@ def main():
             if h.lower() in COMMON_WORDS:
                 cap = re.search(r"\b%s\b" % re.escape(h.capitalize()), text)
                 pathy = re.search(r"[/`\s]%s/|targets/%s\b|reports/%s\b"
-                                  % (re.escape(h),) * 3, text)
+                                  % ((re.escape(h),) * 3), text)
                 if cap or pathy:
                     findings.append((path, "engagement handle %r" % h))
             elif re.search(r"\b%s\b" % re.escape(h), text, re.IGNORECASE):

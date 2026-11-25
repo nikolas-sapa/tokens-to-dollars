@@ -17,6 +17,9 @@ jobs:
       - name: bootstrap local state
         run: python3 tools/bootstrap.py
 
+      - name: engagement-guard — no engagement intel in tracked files
+        run: python3 tools/engagement-guard/guard.py
+
       - name: ledger parses a sample ledger
         run: |
           cat > /tmp/sample.md <<'EOF'
