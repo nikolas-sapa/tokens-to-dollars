@@ -45,6 +45,7 @@ import contextlib
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shlex
@@ -184,8 +185,9 @@ MASS_PATH_RE = re.compile(
     r"|administrators?|tenants?|teams?|organizations?|orgs?|subscribers?"
     r"|customers?|employees?|groups?|roles?)(?:[/?#.]|$)", re.I)
 
-# File writes/deletes outside the approved workspace (the action's cwd
-# plus manifest `workspace` roots): deletes deny, writes escalate.
+# File writes/deletes outside the approved workspace (manifest
+# `workspace` roots only): deletes deny, writes escalate. A caller-chosen
+# cwd outside those roots is itself untrusted.
 DEL_OPS = {"rm", "unlink", "rmdir", "srm", "wipe", "shred", "truncate"}
 COPY_OPS = {"cp", "mv", "ln", "install", "rsync"}
 WRITE_OPS = {"tee", "touch", "mkdir", "patch", "chmod", "chown",
@@ -432,6 +434,107 @@ def _eq_path(tok):
     return [tok.split("=", 1)[1]] if "=" in tok else [tok]
 
 
+def _find_roots(argv, i):
+    """Starting paths of one find invocation (before the expression)."""
+    roots = []
+    for x in argv[i + 1:]:
+        if x in ("-H", "-L", "-P"):
+            continue
+        if x in _ARG_SEP or x.startswith("-") or x in ("!", "(", ")"):
+            break
+        roots.append(x)
+    return roots or ["."]
+
+
+def _find_exec_targets(argv, i):
+    """File operands of commands run by find -exec/-execdir. `{}` means
+    every matched path, so the find roots are the conservative boundary."""
+    roots = _find_roots(argv, i)
+    dels, writes = [], []
+    j = i + 1
+    while j < len(argv):
+        if argv[j] in _ARG_SEP:
+            break
+        if argv[j] not in ("-exec", "-execdir"):
+            j += 1
+            continue
+        sub = []
+        j += 1
+        while j < len(argv) and argv[j] not in (";", "\\;", "+"):
+            sub.append(argv[j])
+            j += 1
+        if not sub:
+            continue
+        base = os.path.basename(sub[0])
+        ops = []
+        for tok in sub[1:]:
+            if tok == "{}":
+                ops += roots
+            elif not tok.startswith("-"):
+                ops.append(tok)
+        if base in DEL_OPS:
+            dels += ops
+        elif base in COPY_OPS:
+            if ops:
+                writes.append(ops[-1])
+        elif base in WRITE_OPS:
+            writes += ops
+        j += 1
+    return dels, writes
+
+
+def _xargs_delete(argv):
+    """Delete command an xargs invocation runs. xargs operands arrive on
+    stdin, so even a bare `xargs rm` cannot be proven workspace-bound."""
+    for i, tok in enumerate(argv):
+        if os.path.basename(tok) != "xargs":
+            continue
+        for x in argv[i + 1:]:
+            if x in _ARG_SEP:
+                break
+            base = os.path.basename(x)
+            if base in DEL_OPS:
+                return base
+    return None
+
+
+def _tar_extract_writes(argv, i):
+    """`-C`/`--directory` extraction roots of one tar invocation."""
+    args = []
+    for x in argv[i + 1:]:
+        if x in _ARG_SEP:
+            break
+        args.append(x)
+    extracting = any(
+        x in ("--extract", "--get")
+        or (x.startswith("-") and not x.startswith("--") and "x" in x[1:])
+        for x in args)
+    if args and not args[0].startswith("-") and "x" in args[0]:
+        extracting = True                       # old-style `tar xf`
+    if not extracting:
+        return []
+    out = []
+    for j, x in enumerate(args):
+        if x == "-C" and j + 1 < len(args):
+            out.append(args[j + 1])
+        elif x.startswith("-C") and len(x) > 2:
+            out.append(x[2:])
+        elif x == "--directory" and j + 1 < len(args):
+            out.append(args[j + 1])
+        elif x.startswith("--directory="):
+            out.append(x.split("=", 1)[1])
+    return [x for x in out if x]
+
+
+def _expand_cwd_tilde(p, cwd):
+    """Bash expands ~+ to $PWD; Python's expanduser deliberately does not."""
+    if p == "~+" or p.startswith("~+/"):
+        base = cwd if isinstance(cwd, str) and cwd else os.getcwd()
+        rest = p[2:].lstrip("/")
+        return os.path.join(base, rest) if rest else base
+    return p
+
+
 def _fs_targets(argv, cwd=None):
     """(delete_targets, write_targets): absolute paths an argv removes
     or writes. Relative paths resolve inside the action cwd (process
@@ -445,9 +548,12 @@ def _fs_targets(argv, cwd=None):
         elif base in COPY_OPS:
             if ops:
                 writes.append(ops[-1])  # destination operand only
-        elif base == "find" and any(
-                x in ("-delete", "--delete") for x in argv[i + 1:]):
-            dels += ops
+        elif base == "find":
+            if any(x in ("-delete", "--delete") for x in argv[i + 1:]):
+                dels += ops
+            fd, fw = _find_exec_targets(argv, i)
+            dels += fd
+            writes += fw
         elif base == "sed" and any(
                 x == "-i" or x.startswith("-i") for x in argv[i + 1:]):
             writes += ops
@@ -455,11 +561,14 @@ def _fs_targets(argv, cwd=None):
             for j in range(i + 1, len(argv) - 1):
                 if argv[j] in ("-o", "-O", "--output"):
                     writes.append(argv[j + 1])
+        elif base == "tar":
+            writes += _tar_extract_writes(argv, i)
         elif base in WRITE_OPS:
             writes += ops
     writes += REDIRECT_RE.findall(" ".join(argv))
 
     def res(p):
+        p = _expand_cwd_tilde(p, cwd)
         if _abspath(p):
             return p
         base = cwd if isinstance(cwd, str) and cwd else os.getcwd()
@@ -470,14 +579,14 @@ def _fs_targets(argv, cwd=None):
     return dels, writes
 
 
-def _ws_roots(a, mf):
-    return [os.path.abspath(os.path.expanduser(r))
-            for r in [a.get("cwd")] + list(mf["workspace"])
+def _ws_roots(mf):
+    return [os.path.realpath(os.path.expanduser(r))
+            for r in mf["workspace"]
             if isinstance(r, str) and r]
 
 
 def _outside(path, roots):
-    p = os.path.abspath(os.path.expanduser(path))
+    p = os.path.realpath(os.path.expanduser(path))
     return not any(p == r or p.startswith(r + os.sep) for r in roots)
 
 
@@ -504,14 +613,15 @@ def harmless_http(a, method, host, mf):
                            "bound declared" % url))
         else:
             try:
-                over = float(att) > AUTH_ATTEMPT_CAP
+                att_n = float(att)
+                invalid = not math.isfinite(att_n) or att_n < 0
             except (TypeError, ValueError):
-                over = None
-            if over is None:
+                att_n, invalid = None, True
+            if invalid:
                 checks.append(("brute_force", "escalate",
-                               "unparseable attempts bound %r on %s"
-                               % (att, url)))
-            elif over:
+                               "invalid attempts bound %r on %s; must be "
+                               "finite and >= 0" % (att, url)))
+            elif att_n > AUTH_ATTEMPT_CAP:
                 checks.append(("brute_force", "deny",
                                "%s declared attempts on credential path "
                                "%s" % (att, url)))
@@ -521,7 +631,8 @@ def harmless_http(a, method, host, mf):
         r = float(rate) if rate is not None else None
     except (TypeError, ValueError):
         r = None
-    if r is not None and r > max(DOS_CAP_MULT * cap, DOS_RATE_FLOOR):
+    if r is not None and math.isfinite(r) and r >= 0 \
+            and r > max(DOS_CAP_MULT * cap, DOS_RATE_FLOOR):
         checks.append(("dos_shaped", "deny",
                        "%s rps on %s is a flood (cap %d)"
                        % (rate, host, cap)))
@@ -590,15 +701,25 @@ def harmless_shell(a, argv, mf):
                        "credential-attack tool: %r" % m.group(0).strip()))
 
     dels, writes = _fs_targets(argv, a.get("cwd"))
-    roots = _ws_roots(a, mf)
+    roots = _ws_roots(mf)
     out_d = [p for p in dels if _outside(p, roots)]
     out_w = [p for p in writes if _outside(p, roots)]
+    xargs_del = _xargs_delete(argv)
     if out_d:
         checks.append(("file_write_delete", "deny",
                        "delete outside approved workspace: %s" % out_d[0]))
     elif out_w:
         checks.append(("file_write_delete", "escalate",
                        "write outside approved workspace: %s" % out_w[0]))
+    elif xargs_del:
+        checks.append(("file_write_delete", "escalate",
+                       "xargs invokes delete op %r with stdin-supplied "
+                       "operands; workspace scope unverifiable" % xargs_del))
+
+    cwd = a.get("cwd")
+    if isinstance(cwd, str) and cwd and _outside(cwd, roots):
+        checks.append(("file_write_delete", "escalate",
+                       "cwd outside approved workspace: %s" % cwd))
 
     return _harmless_pick(checks, mf)
 
@@ -614,8 +735,11 @@ def payload_bodies(argv):
         if "\n" in tok or "<<" in tok:
             bodies.append(tok)                       # heredoc / inline script
         if os.path.basename(tok) in INTERPRETERS:
+            base = os.path.basename(tok)
+            eval_flags = ("-c",) if base not in {"perl", "ruby", "node", "lua"} \
+                else ("-c", "-e")
             for j in range(i + 1, len(argv)):
-                if argv[j] == "-c" and j + 1 < len(argv):
+                if argv[j] in eval_flags and j + 1 < len(argv):
                     bodies.append(argv[j + 1])
                     break
                 if not argv[j].startswith("-"):      # script path, not code
@@ -705,24 +829,29 @@ def judge_http(a, mf):
         return verdict("escalate", "forbidden_action",
                        "action matches manifest forbidden_actions entry %r"
                        % hit)
+    cap = mf["rps_cap"] or 1  # unstated rps -> <=1, per scope-parser
+    rate = a.get("rate", a.get("rps"))
+    r = None
+    if rate is not None:
+        try:
+            r = float(rate)
+        except (TypeError, ValueError):
+            return verdict("deny", "malformed_action",
+                           "unparseable rate %r" % (rate,))
+        if not math.isfinite(r) or r < 0:
+            return verdict("deny", "malformed_action",
+                           "invalid rate %r; must be finite and >= 0" % (rate,))
     hv = harmless_http(a, method, host, mf)
     if hv:
         return hv
     if method in SAFE_METHODS:
         return verdict("allow", "in_scope_readonly",
                        "%s on authorized host %s" % (method, host))
-    cap = mf["rps_cap"] or 1  # unstated rps -> <=1, per scope-parser
-    rate = a.get("rate", a.get("rps"))
     if rate is None:
         return verdict("escalate", "mutation_rate",
                        "state-mutating %s on in-scope %s with no declared "
                        "rate; cannot prove <= rps_cap %d" % (method, host, cap))
-    try:
-        over = float(rate) > cap
-    except (TypeError, ValueError):
-        return verdict("deny", "malformed_action",
-                       "unparseable rate %r" % (rate,))
-    if over:
+    if r > cap:
         return verdict("escalate", "mutation_rate",
                        "state-mutating %s at %s rps exceeds rps_cap %d "
                        "on %s" % (method, rate, cap, host))

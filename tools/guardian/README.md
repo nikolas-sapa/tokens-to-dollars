@@ -78,12 +78,24 @@ class name as the rule.
 | `tunneling` | deny / escalate | forwarders (`ssh -L/-R/-D/-W/-w`, socat, ngrok, chisel, frp, cloudflared, gost, ligolo, sshuttle, proxychains…) deny; `nc`-family listeners/exec relays escalate | `tunneling` |
 | `dos_shaped` | deny / escalate | flood tools (`hping3`, `slowloris`, `t50`, `hulk`, `stress`) and declared `rate` > 10×`rps_cap` or 50 rps deny; shell loops over http clients, `xargs -P≥20`, `seq\|xargs`, `yes\|`, and generic load tools (`wrk`, `vegeta`, `ab`, `k6`) escalate | `dos_shaped` |
 | `brute_force` | deny / escalate | credential-attack tools (`hydra`, `medusa`, `ncrack`, `patator`, `crowbar`…) deny; POST to credential-shaped path (`/login`, `/auth`, `/otp`…) without an `attempts` bound escalates, >5 declared attempts denies | `brute_force` |
-| `file_write_delete` | deny / escalate | `rm`/`unlink`/`rmdir`/`truncate`/`find -delete` on absolute paths outside the approved workspace (action `cwd` + manifest `workspace` roots) deny; `tee`/`cp`/`mv`/`install`/`sed -i`/`>`/`>>`/`curl -o` writes outside it escalate | `file_write_delete:<path-prefix>` (e.g. `file_write_delete:/tmp/uploads` on a file-upload scope) |
+| `file_write_delete` | deny / escalate | `rm`/`unlink`/`rmdir`/`truncate`/`find -delete`/`find -exec` deletes outside the approved workspace deny; `tee`/`cp`/`mv`/`install`/`rsync`/`sed -i`/`>`/`>>`/`curl -o`/`tar -x -C` writes outside it escalate; `xargs` invoking a delete op escalates because its stdin operands cannot be scoped. Approved roots come only from manifest `workspace` entries; a caller-supplied `cwd` outside them escalates by itself, and paths are compared after symlink resolution | `file_write_delete:<path-prefix>` (e.g. `file_write_delete:/tmp/uploads` on a file-upload scope) |
 | `destructive_request` | deny / escalate | mutating verbs on mass/account-shaped paths (`/users`, `/accounts`, `/bulk-*`, `/admin`…) deny; bare `DELETE`/`PUT` on unmarked endpoints escalate | `destructive_request:<path>` |
 
 Allow-list entries are `class` (whole class) or `class:qualifier`
 (qualifier `*` or a substring of the hit detail — path prefix,
 `METHOD url`, tool name). First non-allow-listed hit wins.
+
+## Boundary: tripwire, not sandbox
+
+Guardian is a token-level tripwire. It catches common destructive shapes,
+but it cannot make an unsandboxed shell command safe: reflective or
+language-native file APIs (`getattr(os, "remove")`, `File.delete` and
+equivalents), operands produced by command substitution (`$(<paths)`),
+and executable-name homoglyph shims are invisible or indistinguishable at
+this layer. Archive member paths and interpreter semantics are likewise
+outside a token scan. Treat escalation as the fail-closed boundary and use
+an OS sandbox/approved workspace for execution that must be robust against
+a determined evader.
 
 ## Manifest
 

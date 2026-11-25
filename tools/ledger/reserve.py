@@ -4,7 +4,7 @@ import json
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 SCHEMA = """
@@ -37,6 +37,22 @@ def to_micro(dollars):
     float drift breaks caps: a cap that rounds the wrong way is worse
     than no cap."""
     return int(Decimal(str(dollars)) * 1_000_000)
+
+
+def nonneg_decimal(value, name):
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        sys.exit("error: %s must be a finite number >= 0" % name)
+    if not d.is_finite() or d < 0:
+        sys.exit("error: %s must be a finite number >= 0" % name)
+    return d
+
+
+def nonneg_int(value, name):
+    if value < 0:
+        sys.exit("error: %s must be >= 0" % name)
+    return value
 
 
 def worst_case_micro(est_in_tokens, max_out_tokens, price_in_micro, price_out_micro):
@@ -195,17 +211,26 @@ def settle(conn, intent_id, actual_in, actual_out, price_in_micro=None, price_ou
 
 
 def do_reserve(conn, a):
-    out = reserve(conn, a.intent_id, a.est_in, a.max_out,
-                  to_micro(a.price_in), to_micro(a.price_out), a.ttl,
-                  a.reserve_pct)
+    est_in = nonneg_int(a.est_in, "--est-in")
+    max_out = nonneg_int(a.max_out, "--max-out")
+    p_in = nonneg_decimal(a.price_in, "--price-in")
+    p_out = nonneg_decimal(a.price_out, "--price-out")
+    reserve_pct = nonneg_decimal(a.reserve_pct, "--reserve-pct")
+    out = reserve(conn, a.intent_id, est_in, max_out,
+                  to_micro(p_in), to_micro(p_out), a.ttl,
+                  reserve_pct)
     print(json.dumps(out))
     return 0 if out["ok"] else 1
 
 
 def do_settle(conn, a):
-    p_in = to_micro(a.price_in) if a.price_in is not None else None
-    p_out = to_micro(a.price_out) if a.price_out is not None else None
-    print(json.dumps(settle(conn, a.intent_id, a.actual_in, a.actual_out, p_in, p_out)))
+    actual_in = nonneg_int(a.actual_in, "--actual-in")
+    actual_out = nonneg_int(a.actual_out, "--actual-out")
+    p_in = (to_micro(nonneg_decimal(a.price_in, "--price-in"))
+            if a.price_in is not None else None)
+    p_out = (to_micro(nonneg_decimal(a.price_out, "--price-out"))
+             if a.price_out is not None else None)
+    print(json.dumps(settle(conn, a.intent_id, actual_in, actual_out, p_in, p_out)))
     return 0
 
 
@@ -234,8 +259,8 @@ def do_cap(conn, a):
         row = conn.execute("SELECT cap_micro FROM budget WHERE id=1").fetchone()
         print(json.dumps({"cap_micro": row["cap_micro"] if row else None}))
         return 0
+    cap = to_micro(nonneg_decimal(a.amount, "cap amount"))
     conn.execute("BEGIN IMMEDIATE")
-    cap = to_micro(a.amount)
     conn.execute(
         "INSERT INTO budget (id,cap_micro) VALUES (1,?)"
         " ON CONFLICT(id) DO UPDATE SET cap_micro=excluded.cap_micro", (cap,))

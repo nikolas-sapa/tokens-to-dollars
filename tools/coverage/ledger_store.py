@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -40,11 +41,20 @@ def default_worker():
 def connect(root):
     db = Path(root) / "memory" / "coverage.db"
     db.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db), timeout=10)
-    conn.isolation_level = None
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript(SCHEMA)
-    return conn
+    for attempt in range(2):
+        conn = None
+        try:
+            conn = sqlite3.connect(str(db), timeout=10)
+            conn.isolation_level = None
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(SCHEMA)
+            return conn
+        except sqlite3.OperationalError as e:
+            if conn is not None:
+                conn.close()
+            if attempt:
+                sys.exit("error: cannot initialize coverage ledger %s: %s" % (db, e))
+            time.sleep(0.1)
 
 
 def rows(conn, where="", params=()):

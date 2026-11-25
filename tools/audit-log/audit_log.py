@@ -9,6 +9,7 @@ sidecar files under payloads/ next to the log; the entry stores their sha256
 so tampering with either half is detectable. Stdlib only.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -64,49 +65,57 @@ def payloads_dir(path):
 
 
 def append(path, kind, data, sidecar):
-    entries, err = read_entries(path)
-    if err:
-        sys.exit("error: %s" % err)
-    prev = entries[-1]["hash"] if entries else GENESIS
-    seq = entries[-1]["seq"] + 1 if entries else 0
-    entry = {"v": 1, "seq": seq, "ts": now_ts(), "kind": kind}
-    if sidecar:
-        src = Path(sidecar)
-        if not src.is_file():
-            sys.exit("error: sidecar not found: %s" % sidecar)
-        blob = src.read_bytes()
-        pdir = payloads_dir(path)
-        pdir.mkdir(parents=True, exist_ok=True)
-        name = "%06d-%s%s" % (seq, hashlib.sha256(blob).hexdigest()[:12], src.suffix)
-        (pdir / name).write_bytes(blob)
-        entry["sidecar"] = {"path": "payloads/%s" % name,
-                            "sha256": "sha256:" + hashlib.sha256(blob).hexdigest(),
-                            "bytes": len(blob)}
-    if data is not None:
-        entry["data"] = data
-    if not sidecar and data is None:
-        entry["data"] = {}
-    entry["prev_hash"] = prev
-    entry["hash"] = digest({k: v for k, v in entry.items() if k != "hash"}, prev)
+    # seq allocation is read-modify-write state; hold an exclusive flock on
+    # the log inode across tip-read through fsync so concurrent appenders
+    # cannot fork the chain.
+    with open(path, "a+", encoding="utf-8") as lockf:
+        fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+        try:
+            entries, err = read_entries(path)
+            if err:
+                sys.exit("error: %s" % err)
+            prev = entries[-1]["hash"] if entries else GENESIS
+            seq = entries[-1]["seq"] + 1 if entries else 0
+            entry = {"v": 1, "seq": seq, "ts": now_ts(), "kind": kind}
+            if sidecar:
+                src = Path(sidecar)
+                if not src.is_file():
+                    sys.exit("error: sidecar not found: %s" % sidecar)
+                blob = src.read_bytes()
+                pdir = payloads_dir(path)
+                pdir.mkdir(parents=True, exist_ok=True)
+                name = "%06d-%s%s" % (seq, hashlib.sha256(blob).hexdigest()[:12], src.suffix)
+                (pdir / name).write_bytes(blob)
+                entry["sidecar"] = {"path": "payloads/%s" % name,
+                                    "sha256": "sha256:" + hashlib.sha256(blob).hexdigest(),
+                                    "bytes": len(blob)}
+            if data is not None:
+                entry["data"] = data
+            if not sidecar and data is None:
+                entry["data"] = {}
+            entry["prev_hash"] = prev
+            entry["hash"] = digest({k: v for k, v in entry.items() if k != "hash"}, prev)
 
-    seg = [e["hash"] for e in entries if e["kind"] != "checkpoint"] + [entry["hash"]]
-    lines = [entry]
-    if len(seg) % CHECKPOINT_EVERY == 0:
-        root = merkle_root(seg[-CHECKPOINT_EVERY:])
-        cp = {"v": 1, "seq": seq + 1, "ts": now_ts(), "kind": "checkpoint",
-              "data": {"root": root, "segment": [seq - CHECKPOINT_EVERY + 1, seq],
-                       "count": CHECKPOINT_EVERY},
-              "prev_hash": entry["hash"]}
-        cp["hash"] = digest(cp, cp["prev_hash"])
-        lines.append(cp)
+            seg = [e["hash"] for e in entries if e["kind"] != "checkpoint"] + [entry["hash"]]
+            lines = [entry]
+            if len(seg) % CHECKPOINT_EVERY == 0:
+                root = merkle_root(seg[-CHECKPOINT_EVERY:])
+                cp = {"v": 1, "seq": seq + 1, "ts": now_ts(), "kind": "checkpoint",
+                      "data": {"root": root, "segment": [seq - CHECKPOINT_EVERY + 1, seq],
+                               "count": CHECKPOINT_EVERY},
+                      "prev_hash": entry["hash"]}
+                cp["hash"] = digest(cp, cp["prev_hash"])
+                lines.append(cp)
 
-    with open(path, "a", encoding="utf-8") as f:
-        for e in lines:
-            f.write(json.dumps(e, separators=(",", ":")) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-    for e in lines:
-        print(json.dumps(e))
+            with open(path, "a", encoding="utf-8") as f:
+                for e in lines:
+                    f.write(json.dumps(e, separators=(",", ":")) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            for e in lines:
+                print(json.dumps(e))
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 
 
 def verify(path, quiet=False):

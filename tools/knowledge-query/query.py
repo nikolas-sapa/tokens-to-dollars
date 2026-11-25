@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 import argparse
+import heapq
 import json
+import math
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 KW_FIELDS = ("title", "weakness", "program", "url")
+KEEP_FIELDS = ("_scan", "_scan_hits", "_untrusted", "bounty_usd", "bytes",
+               "commit", "commits", "contest", "cve", "cwe", "date", "file",
+               "findings_url", "firm", "method", "n_findings", "n_samples",
+               "patched_func", "platform", "poc", "program", "pushed_at",
+               "repo", "severity", "source", "status", "title", "url",
+               "vulnerable_func", "weakness")
 DATE_FMTS = ("%Y/%m/%d", "%d %b %Y", "%b %d, %Y", "%d %B %Y", "%B %d, %Y", "%Y-%m-%dT%H:%M:%S", "%Y")
 
 
@@ -25,20 +33,29 @@ def norm_date(s):
     return ""
 
 
-def load(path):
-    recs = []
-    for i, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            r = json.loads(line)
-        except json.JSONDecodeError:
-            print("warning: skipping malformed line %d" % i, file=sys.stderr)
-            continue
-        if isinstance(r, dict):
-            recs.append(r)
-    return recs
+def iter_records(path):
+    """Yield projected records one line at a time, bounded by the output schema."""
+    with open(path, encoding="utf-8") as f:
+        for i, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                print("warning: skipping malformed line %d" % i, file=sys.stderr)
+                continue
+            if isinstance(r, dict):
+                yield {k: r[k] for k in KEEP_FIELDS if k in r}
+
+
+def finite_number(v):
+    return isinstance(v, (int, float)) and (isinstance(v, int) or math.isfinite(v))
+
+
+def rank(rec):
+    b = rec.get("bounty_usd")
+    bounty = b if finite_number(b) else -1
+    return bounty, norm_date(rec.get("date"))
 
 
 def has(rec, key, needle):
@@ -63,10 +80,9 @@ def main():
 
     if not Path(args.file).is_file():
         sys.exit("error: records file not found: %s" % args.file)
-    recs = load(args.file)
-
-    hits = []
-    for r in recs:
+    limit = max(args.limit, 0)
+    heap = []
+    for idx, r in enumerate(iter_records(args.file)):
         if args.program and not has(r, "program", args.program):
             continue
         if args.cwe and not (has(r, "weakness", args.cwe) or has(r, "cwe", args.cwe)):
@@ -75,17 +91,23 @@ def main():
             continue
         if args.min_bounty is not None:
             b = r.get("bounty_usd")
-            if not isinstance(b, (int, float)) or b < args.min_bounty:
+            if not finite_number(b) or b < args.min_bounty:
                 continue
         if args.keyword:
             hay = " ".join(str(r.get(k) or "") for k in KW_FIELDS)
             if args.keyword.lower() not in hay.lower():
                 continue
-        hits.append(r)
+        if limit == 0:
+            continue
+        bounty, date = rank(r)
+        item = (bounty, date, -idx, r)
+        if len(heap) < limit:
+            heapq.heappush(heap, item)
+        elif item[:3] > heap[0][:3]:
+            heapq.heapreplace(heap, item)
 
-    hits.sort(key=lambda r: (r.get("bounty_usd") if isinstance(r.get("bounty_usd"), (int, float)) else -1,
-                             norm_date(r.get("date"))), reverse=True)
-    hits = hits[: max(args.limit, 0)]
+    heap.sort(key=lambda item: item[:3], reverse=True)
+    hits = [item[3] for item in heap]
 
     if args.rescan:
         cdir = str(Path(__file__).resolve().parent.parent / "content-scan")

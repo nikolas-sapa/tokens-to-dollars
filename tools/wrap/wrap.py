@@ -823,6 +823,8 @@ def main(argv):
     if tdef["json"] and not any(a.split("=")[0] in JSONY_FLAGS for a in tool_args):
         final.append(tdef["json"])
     rate = wa.rate or (manifest or {}).get("rps_cap")
+    if manifest and rate is None:
+        rate = 1  # unstated/null rps_cap -> default-safe <=1 rps
     if rate:
         if tdef.get("rate") and not any(a.split("=")[0] == tdef["rate"] for a in tool_args):
             final += [tdef["rate"], str(rate)]
